@@ -1,0 +1,6 @@
+{
+  "name": "GraspIt",
+  "description": "A practitioner-led course marketplace and learning management platform for Tech, Design, AI, and Product Engineering, featuring Student, Instructor, and Admin workspaces.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

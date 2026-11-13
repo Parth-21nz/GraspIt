@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: graspit
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22
+      - key: AUTH_SECRET
+        generateValue: true
+      # Portfolio/demo deployment: keeps the demo accounts and shows their
+      # credentials on the sign-in page. Set to "false" for real users.
+      - key: DEMO_MODE
+        value: "true"
