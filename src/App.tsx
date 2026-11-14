@@ -84,31 +84,32 @@ export default function App() {
   const [pendingCourseAfterAuth, setPendingCourseAfterAuth] =
     useState<CourseDocument | null>(null);
 
-  useEffect(() => {
-    async function fetchBootstrap() {
-      try {
-        const res = await apiFetch('/api/bootstrap');
-        if (!res.ok) throw new Error('Failed to load initial data');
-        const data = await res.json();
-        setDemoMode(Boolean(data.demoMode));
-        if (token && !data.me) {
-          // Stored session is expired or invalid
-          clearSession();
-        }
-        setUsers(data.users || []);
-        setCategories(data.categories || []);
-        setCourses(data.courses || []);
-        setEnrollments(data.enrollments || []);
-        setNotes(data.notes || []);
-        setInquiries(data.inquiries || []);
-        setMentors(data.mentors || []);
-      } catch (err) {
-        console.error('Error loading GraspIt bootstrap data:', err);
-      } finally {
-        setLoading(false);
+  const loadBootstrap = async () => {
+    try {
+      const res = await apiFetch('/api/bootstrap');
+      if (!res.ok) throw new Error('Failed to load initial data');
+      const data = await res.json();
+      setDemoMode(Boolean(data.demoMode));
+      if (token && !data.me) {
+        // Stored session is expired or invalid
+        clearSession();
       }
+      setUsers(data.users || []);
+      setCategories(data.categories || []);
+      setCourses(data.courses || []);
+      setEnrollments(data.enrollments || []);
+      setNotes(data.notes || []);
+      setInquiries(data.inquiries || []);
+      setMentors(data.mentors || []);
+    } catch (err) {
+      console.error('Error loading GraspIt bootstrap data:', err);
+    } finally {
+      setLoading(false);
     }
-    fetchBootstrap();
+  };
+
+  useEffect(() => {
+    loadBootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -158,10 +159,10 @@ export default function App() {
   const handleConfirmEnrollment = async (
     courseId: string,
     amountPaid: number
-  ) => {
+  ): Promise<string | null> => {
     if (!currentUser) {
       setActiveView('auth');
-      return;
+      return null;
     }
     const res = await apiFetch('/api/enrollments', {
       method: 'POST',
@@ -183,11 +184,17 @@ export default function App() {
           c._id === courseId ? { ...c, studentsCount: c.studentsCount + 1 } : c
         )
       );
+      // Reload so the newly enrolled course arrives with its lesson video URLs
+      // (they are withheld from users who are not enrolled).
+      await loadBootstrap();
       setCheckoutCourse(null);
       setSelectedPlayerCourseId(courseId);
       setActiveView('workspace');
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      return null;
     }
+    const body = await res.json().catch(() => null);
+    return body?.error || 'Enrollment failed. Please try again.';
   };
 
   const handleToggleLessonProgress = async (

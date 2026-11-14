@@ -476,8 +476,18 @@ function loadDb(): GraspItDatabase {
       fs.writeFileSync(DB_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
     }
     return parsed;
-  } catch {
-    return structuredClone(SEED_DATA);
+  } catch (err) {
+    // Never fall back to seed data here: the next saveDb() would overwrite the
+    // real database with it. Keep a copy of the unreadable file and fail loudly.
+    console.error('Failed to read database file:', err);
+    try {
+      if (fs.existsSync(DB_FILE)) {
+        fs.copyFileSync(DB_FILE, `${DB_FILE}.corrupt-${Date.now()}`);
+      }
+    } catch {
+      // best-effort backup only
+    }
+    throw new Error('Database unavailable.');
   }
 }
 
@@ -486,7 +496,11 @@ function saveDb(db: GraspItDatabase): void {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+    // Write to a temp file then rename, so a crash mid-write can't leave a
+    // half-written (corrupt) database behind.
+    const tmp = `${DB_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf-8');
+    fs.renameSync(tmp, DB_FILE);
   } catch (err) {
     console.error('Failed to persist database:', err);
   }
@@ -628,17 +642,39 @@ function initDb(): void {
   if (changed) saveDb(db);
 }
 
+/** Returns a copy of the course with every lesson videoUrl blanked out. */
+function withoutVideoUrls(course: CourseDocument): CourseDocument {
+  return {
+    ...course,
+    modules: course.modules.map((m) => ({
+      ...m,
+      lessons: m.lessons.map((l) => ({ ...l, videoUrl: '' })),
+    })),
+  };
+}
+
+/**
+ * Courses the user may see. Lesson video URLs are only included for admins,
+ * the course's instructor, and enrolled students; everyone else gets the
+ * syllabus (titles, durations, ids) with videoUrl blanked.
+ */
 function visibleCourses(db: GraspItDatabase, user?: UserDocument): CourseDocument[] {
   if (user?.role === 'admin') return db.courses;
   const enrolled = new Set(
     user ? db.enrollments.filter((e) => e.userId === user._id).map((e) => e.courseId) : []
   );
-  return db.courses.filter(
-    (c) =>
-      c.status === 'published' ||
-      (user && c.instructorId === user._id) ||
-      enrolled.has(c._id)
-  );
+  return db.courses
+    .filter(
+      (c) =>
+        c.status === 'published' ||
+        (user && c.instructorId === user._id) ||
+        enrolled.has(c._id)
+    )
+    .map((c) =>
+      (user && c.instructorId === user._id) || enrolled.has(c._id)
+        ? c
+        : withoutVideoUrls(c)
+    );
 }
 
 // Simple in-memory login throttle: 10 failed attempts / 15 min per IP
@@ -683,10 +719,19 @@ async function startServer() {
 
   initDb();
 
-  // Course routes accept large bodies (base64 cover images); everything else is small.
-  app.use('/api/courses', express.json({ limit: '25mb' }));
-  app.use(express.json({ limit: '100kb' }));
+  // Authenticate first (it only reads headers), so large request bodies are
+  // only ever parsed for signed-in users who are allowed to upload them.
   app.use('/api', authenticate);
+  const smallJson = express.json({ limit: '100kb' });
+  // Course routes accept large bodies (base64 cover images) until uploads move
+  // to object storage.
+  const largeJson = express.json({ limit: '25mb' });
+  app.use('/api', (req: AuthedRequest, res: Response, next: NextFunction) => {
+    const canUpload =
+      (req.user?.role === 'instructor' || req.user?.role === 'admin') &&
+      req.path.startsWith('/courses');
+    (canUpload ? largeJson : smallJson)(req, res, next);
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true });
@@ -1032,6 +1077,15 @@ async function startServer() {
       return;
     }
 
+    // Payments are simulated. Only hand out paid courses for free in demo mode;
+    // otherwise block them until real payment verification exists.
+    if (course.price > 0 && !DEMO_MODE) {
+      res.status(402).json({
+        error: 'Paid enrollment is not available yet. Payments are not configured.',
+      });
+      return;
+    }
+
     course.studentsCount += 1;
 
     const enrollment: EnrollmentDocument = {
@@ -1055,7 +1109,7 @@ async function startServer() {
     '/api/enrollments/:id/progress',
     requireAuth,
     (req: AuthedRequest, res: Response) => {
-      const { lessonId } = req.body as { lessonId: string };
+      const { lessonId } = req.body as { lessonId?: unknown };
       const db = loadDb();
       const enrollment = db.enrollments.find((e) => e._id === req.params.id);
       if (!enrollment || enrollment.userId !== req.user!._id) {
@@ -1064,8 +1118,24 @@ async function startServer() {
       }
 
       const course = db.courses.find((c) => c._id === enrollment.courseId);
-      const totalLessons =
-        course?.modules.reduce((acc, m) => acc + m.lessons.length, 0) || 1;
+      if (!course) {
+        res.status(404).json({ error: 'Course not found.' });
+        return;
+      }
+
+      // Only lessons that actually belong to this course can be completed.
+      const validLessonIds = new Set(
+        course.modules.flatMap((m) => m.lessons.map((l) => l._id))
+      );
+      if (typeof lessonId !== 'string' || !validLessonIds.has(lessonId)) {
+        res.status(400).json({ error: 'Lesson does not belong to this course.' });
+        return;
+      }
+      // Drop any stale/bogus ids saved before this check existed.
+      enrollment.completedLessonIds = enrollment.completedLessonIds.filter((id) =>
+        validLessonIds.has(id)
+      );
+      const totalLessons = validLessonIds.size;
 
       if (enrollment.completedLessonIds.includes(lessonId)) {
         enrollment.completedLessonIds = enrollment.completedLessonIds.filter(

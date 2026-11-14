@@ -6,7 +6,7 @@ interface CheckoutModalProps {
   course: CourseDocument | null;
   currentUser: UserDocument;
   onClose: () => void;
-  onConfirmEnrollment: (courseId: string, amountPaid: number) => Promise<void>;
+  onConfirmEnrollment: (courseId: string, amountPaid: number) => Promise<string | null>;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -20,6 +20,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [expiry, setExpiry] = useState('09/29');
   const [cvc, setCvc] = useState('842');
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!course) return null;
 
@@ -28,8 +29,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
+    setError(null);
     try {
-      await onConfirmEnrollment(course._id, course.price);
+      setError(await onConfirmEnrollment(course._id, course.price));
     } finally {
       setSubmitting(false);
     }
@@ -167,6 +169,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </div>
 
           {/* Actions */}
+          {error && (
+            <p role="alert" className="text-sm text-[var(--red)]">
+              {error}
+            </p>
+          )}
           <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
             <button
               type="button"
