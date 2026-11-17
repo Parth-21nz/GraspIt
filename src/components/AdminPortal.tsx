@@ -122,7 +122,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
           <div className="p-4 rounded-[18px] bg-[var(--surface)] border border-[var(--border)]">
             <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
-              Direct Checkout Vol
+              Sample Booking Value
             </div>
             <div className="font-display text-2xl font-bold text-[var(--text-primary)] tabular-nums mt-1">
               ₹{totalPlatformBookings.toLocaleString('en-IN')}

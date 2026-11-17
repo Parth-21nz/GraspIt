@@ -1,0 +1,47 @@
+name: Verify GraspIt
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: graspit
+          POSTGRES_PASSWORD: graspit
+          POSTGRES_DB: graspit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U graspit -d graspit_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://graspit:graspit@localhost:5432/graspit_test
+      AUTH_SECRET: ci-only-random-test-configuration-secret-32-characters
+      NODE_ENV: test
+      DEMO_MODE: 'false'
+      PAYMENTS_MODE: disabled
+      PUBLIC_ORIGIN: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install prisma validate
+      - run: npx --no-install prisma generate
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run db:deploy
+      - run: npx --no-install prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+      - run: npm test

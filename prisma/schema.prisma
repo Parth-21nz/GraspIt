@@ -1,0 +1,219 @@
+// GraspIt database schema (PostgreSQL).
+// The connection URL comes from DATABASE_URL via prisma.config.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  student
+  instructor
+  admin
+}
+
+enum UserStatus {
+  active
+  suspended
+}
+
+enum CourseLevel {
+  Foundation
+  Intermediate
+  Principal
+}
+
+enum CourseStatus {
+  draft
+  pending
+  published
+}
+
+enum InquiryStatus {
+  new
+  reviewed
+}
+
+enum EnrollmentPaymentMode {
+  legacy
+  free
+  mock
+}
+
+enum UploadProvider {
+  local
+  cloudinary
+}
+
+enum UploadState {
+  ready
+  deleting
+}
+
+model User {
+  id          String       @id
+  name        String
+  email       String       @unique
+  password    String
+  role        UserRole     @default(student)
+  title       String       @default("")
+  bio         String       @default("")
+  avatar      String       @default("")
+  avatarAssetId String?
+  avatarAsset UploadAsset? @relation("ProfileAvatar", fields: [avatarAssetId], references: [id], onDelete: Restrict)
+  status      UserStatus   @default(active)
+  joinedAt    DateTime     @default(now())
+  courses     Course[]
+  enrollments Enrollment[]
+  notes       Note[]
+  uploads     UploadAsset[] @relation("UploadedAssets")
+
+  @@index([avatarAssetId])
+}
+
+model Category {
+  id            String   @id
+  name          String   @unique
+  description   String   @default("")
+  createdByRole UserRole
+  createdAt     DateTime @default(now())
+}
+
+model Mentor {
+  id               String   @id
+  name             String
+  role             String
+  organization     String
+  signatureQuote   String
+  bio              String
+  avatar           String
+  specialties      String[]
+  studentsMentored String
+  position         Int      @default(0)
+}
+
+model Course {
+  id                  String       @id
+  title               String
+  subtitle            String       @default("")
+  // Category is stored by name (not a foreign key) so deleting a category
+  // doesn't touch the courses filed under it.
+  category            String
+  level               CourseLevel  @default(Intermediate)
+  price               Int          @default(0)
+  durationHours       Float        @default(1)
+  studentsCount       Int          @default(0)
+  thumbnail           String       @default("")
+  thumbnailAssetId    String?
+  thumbnailAsset      UploadAsset? @relation(fields: [thumbnailAssetId], references: [id], onDelete: Restrict)
+  instructorId        String
+  instructor          User         @relation(fields: [instructorId], references: [id])
+  instructorSignature String
+  status              CourseStatus @default(pending)
+  featured            Boolean      @default(false)
+  skills              String[]
+  outcomes            String[]
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  modules             Module[]
+  enrollments         Enrollment[]
+  notes               Note[]
+
+  @@index([status])
+  @@index([instructorId])
+  @@index([thumbnailAssetId])
+}
+
+model Module {
+  id       String   @id
+  courseId String
+  course   Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title    String
+  position Int
+  lessons  Lesson[]
+
+  @@index([courseId])
+}
+
+model Lesson {
+  id              String   @id
+  moduleId        String
+  module          Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title           String
+  durationMinutes Int      @default(0)
+  videoUrl        String   @default("")
+  summary         String   @default("")
+  keyTakeaways    String[]
+  position        Int
+
+  @@index([moduleId])
+}
+
+model Enrollment {
+  id                 String    @id
+  userId             String
+  user               User      @relation(fields: [userId], references: [id])
+  courseId           String
+  // Restrict: a course with enrollments can't be hard-deleted.
+  course             Course    @relation(fields: [courseId], references: [id])
+  enrolledAt         DateTime  @default(now())
+  amountPaid         Int       @default(0)
+  paymentRef         String
+  paymentMode        EnrollmentPaymentMode @default(legacy)
+  completedLessonIds String[]
+  progressPercent    Int       @default(0)
+  certificateIssuedAt DateTime?
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+}
+
+model Note {
+  id                 String   @id
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId           String
+  course             Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessonId           String
+  lessonTitle        String
+  timestampFormatted String
+  content            String
+  createdAt          DateTime @default(now())
+
+  @@index([userId])
+  @@index([courseId])
+}
+
+model Inquiry {
+  id        String        @id
+  name      String
+  email     String
+  topic     String
+  message   String
+  status    InquiryStatus @default(new)
+  createdAt DateTime      @default(now())
+}
+
+model UploadAsset {
+  id         String         @id
+  ownerId    String
+  owner      User           @relation("UploadedAssets", fields: [ownerId], references: [id], onDelete: Restrict)
+  provider   UploadProvider
+  providerId String
+  url        String
+  bytes      Int
+  width      Int
+  height     Int
+  state      UploadState    @default(ready)
+  createdAt  DateTime       @default(now())
+  courses    Course[]
+  profileUsers User[]        @relation("ProfileAvatar")
+
+  @@unique([provider, providerId])
+  @@index([ownerId])
+  @@index([state, createdAt])
+}

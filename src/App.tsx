@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, LogOut } from 'lucide-react';
 import { FloatingNavbar } from './components/FloatingNavbar';
 import { LandingPage } from './components/LandingPage';
@@ -12,6 +12,8 @@ import { InstructorCMS } from './components/InstructorCMS';
 import { AdminPortal } from './components/AdminPortal';
 import { CheckoutModal } from './components/CheckoutModal';
 import { AuthPage } from './components/AuthPage';
+import { ProfilePage } from './components/ProfilePage';
+import { uploadImage } from './api/uploads';
 import type {
   CategoryDocument,
   CourseDocument,
@@ -21,10 +23,19 @@ import type {
   MentorProfile,
   UserDocument,
   UserRole,
+  AppView,
+  ProfileDocument,
+  ProfileUpdate,
 } from './types';
 
 const AUTH_STORAGE_KEY = 'graspit_auth_user_id';
 const TOKEN_STORAGE_KEY = 'graspit_auth_token';
+
+async function responseError(res: Response, fallback: string) {
+  const body = await res.json().catch(() => null);
+  const issue = body?.issues?.[0];
+  return issue ? `${issue.path}: ${issue.message}` : body?.error || fallback;
+}
 
 function readStorage(key: string): string | null {
   try {
@@ -32,6 +43,11 @@ function readStorage(key: string): string | null {
   } catch {
     return null;
   }
+}
+
+function viewFromHash(): AppView {
+  const view = window.location.hash.slice(1);
+  return view === 'profile' || view === 'workspace' || view === 'auth' ? view : 'landing';
 }
 
 export default function App() {
@@ -52,6 +68,9 @@ export default function App() {
     readStorage(TOKEN_STORAGE_KEY)
   );
   const [demoMode, setDemoMode] = useState<boolean>(false);
+  const [paymentsMode, setPaymentsMode] = useState<'disabled' | 'mock'>('disabled');
+  const profileDirty = useRef(false);
+  const setProfileDirty = useCallback((dirty: boolean) => { profileDirty.current = dirty; }, []);
 
   const clearSession = () => {
     setToken(null);
@@ -72,9 +91,27 @@ export default function App() {
       return res;
     });
   };
-  const [activeView, setActiveView] = useState<'landing' | 'workspace' | 'auth'>(
-    'landing'
-  );
+  const [activeView, setViewState] = useState<AppView>(viewFromHash);
+  const setActiveView = (view: AppView) => {
+    if (activeView === 'profile' && view !== 'profile' && profileDirty.current && !window.confirm('Leave without saving your profile changes?')) return;
+    if (view !== activeView) profileDirty.current = false;
+    setViewState(view);
+    const hash = view === 'landing' ? '#home' : `#${view}`;
+    if (window.location.hash !== hash) window.location.hash = hash;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  useEffect(() => {
+    const syncView = () => {
+      const next = viewFromHash();
+      if (next === activeView) return;
+      if (activeView === 'profile' && profileDirty.current && !window.confirm('Leave without saving your profile changes?')) {
+        window.history.replaceState(null, '', '#profile'); return;
+      }
+      profileDirty.current = false; setViewState(next);
+    };
+    window.addEventListener('hashchange', syncView);
+    return () => window.removeEventListener('hashchange', syncView);
+  }, [activeView]);
   const [selectedPlayerCourseId, setSelectedPlayerCourseId] = useState<
     string | null
   >(null);
@@ -90,6 +127,7 @@ export default function App() {
       if (!res.ok) throw new Error('Failed to load initial data');
       const data = await res.json();
       setDemoMode(Boolean(data.demoMode));
+      setPaymentsMode(data.paymentsMode === 'mock' ? 'mock' : 'disabled');
       if (token && !data.me) {
         // Stored session is expired or invalid
         clearSession();
@@ -143,12 +181,14 @@ export default function App() {
       setPendingCourseAfterAuth(null);
       setActiveView('landing');
     } else {
-      setActiveView('workspace');
+      setActiveView(activeView === 'profile' ? 'profile' : 'workspace');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   const handleLogout = () => {
+    if (profileDirty.current && !window.confirm('Leave without saving your profile changes?')) return;
+    profileDirty.current = false;
     clearSession();
     setCheckoutCourse(null);
     setActiveView('auth');
@@ -156,9 +196,21 @@ export default function App() {
   };
 
   // ─── API HANDLERS ───────────────────────────────────────────────────────
+  const handleLoadProfile = async (): Promise<ProfileDocument> => {
+    const res = await apiFetch('/api/profile');
+    if (!res.ok) throw new Error(await responseError(res, 'Your profile could not be loaded.'));
+    return res.json();
+  };
+  const handleSaveProfile = async (input: ProfileUpdate): Promise<ProfileDocument> => {
+    const res = await apiFetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+    if (!res.ok) throw new Error(await responseError(res, 'Your changes could not be saved.'));
+    const data: ProfileDocument = await res.json();
+    setUsers((previous) => previous.map((user) => user._id === data.user._id ? data.user : user));
+    setCourses((previous) => previous.map((course) => course.instructorId === data.user._id ? { ...course, instructorName: data.user.name, instructorRole: data.user.title } : course));
+    return data;
+  };
   const handleConfirmEnrollment = async (
-    courseId: string,
-    amountPaid: number
+    courseId: string
   ): Promise<string | null> => {
     if (!currentUser) {
       setActiveView('auth');
@@ -168,9 +220,7 @@ export default function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: currentUser._id,
         courseId,
-        amountPaid,
       }),
     });
     if (res.ok) {
@@ -274,6 +324,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) throw new Error(await responseError(res, 'The course could not be saved.'));
     if (res.ok) {
       const data: { course: CourseDocument; categories: CategoryDocument[] } =
         await res.json();
@@ -293,6 +344,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) throw new Error(await responseError(res, 'The course could not be saved.'));
     if (res.ok) {
       const updated: CourseDocument = await res.json();
       setCourses((prev) =>
@@ -305,6 +357,9 @@ export default function App() {
     const res = await apiFetch(`/api/courses/${courseId}`, { method: 'DELETE' });
     if (res.ok) {
       setCourses((prev) => prev.filter((c) => c._id !== courseId));
+    } else {
+      const body = await res.json().catch(() => null);
+      window.alert(body?.error || 'Could not delete this course.');
     }
   };
 
@@ -384,12 +439,17 @@ export default function App() {
       />
 
       {/* 2. Main View Switch: Auth Page vs. Landing Page vs. Role Workspace */}
-      {activeView === 'auth' ? (
+      {activeView === 'auth' || (activeView === 'profile' && !currentUser) ? (
         <AuthPage
           showDemoAccounts={demoMode}
           onAuthSuccess={handleAuthSuccess}
           onBackToLanding={() => setActiveView('landing')}
         />
+      ) : activeView === 'profile' && currentUser ? (
+        <ProfilePage currentUser={currentUser} onLoad={handleLoadProfile} onSave={handleSaveProfile} onDirtyChange={setProfileDirty} onBack={() => setActiveView('workspace')} onUploadAvatar={(file, progress, signal) => {
+          if (!token) return Promise.reject(new Error('Please sign in before uploading.'));
+          return uploadImage(file, token, progress, signal, '/api/profile/avatar');
+        }} />
       ) : activeView === 'landing' || !currentUser ? (
         <LandingPage
           categories={categories}
@@ -491,13 +551,17 @@ export default function App() {
           {currentUser.role === 'instructor' && (
             <InstructorCMS
               currentUser={currentUser}
-              courses={courses}
+              courses={courses.filter((course) => course.instructorId === currentUser._id)}
               categories={categories}
               enrollments={enrollments}
               onCreateCourse={handleCreateCourse}
               onUpdateCourse={handleUpdateCourse}
               onDeleteCourse={handleDeleteCourse}
               onCreateCategory={handleCreateCategory}
+              onUploadCover={(file, progress, signal) => {
+                if (!token) return Promise.reject(new Error('Please sign in before uploading.'));
+                return uploadImage(file, token, progress, signal);
+              }}
             />
           )}
 
@@ -525,6 +589,7 @@ export default function App() {
         <CheckoutModal
           course={checkoutCourse}
           currentUser={currentUser}
+          paymentsMode={paymentsMode}
           onClose={() => setCheckoutCourse(null)}
           onConfirmEnrollment={handleConfirmEnrollment}
         />

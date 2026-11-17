@@ -1,4 +1,15 @@
 export type UserRole = 'student' | 'instructor' | 'admin';
+export type AppView = 'landing' | 'workspace' | 'auth' | 'profile';
+
+export interface UploadAssetDocument {
+  _id: string;
+  url: string;
+  bytes: number;
+  mimeType: string;
+  width: number;
+  height: number;
+  createdAt: string;
+}
 
 export interface UserDocument {
   _id: string;
@@ -9,14 +20,28 @@ export interface UserDocument {
   title: string;
   bio: string;
   avatar: string;
+  avatarAssetId?: string | null;
   status: 'active' | 'suspended';
   joinedAt: string;
+}
+
+export interface ProfileDocument {
+  user: UserDocument;
+  emailChangeAllowed: boolean;
+}
+
+export interface ProfileUpdate {
+  name?: string;
+  title?: string;
+  bio?: string;
+  email?: string;
+  currentPassword?: string;
+  avatarAssetId?: string | null;
 }
 
 export interface CategoryDocument {
   _id: string;
   name: string;
-  slug: string;
   description: string;
   createdByRole: UserRole;
   createdAt: string;
@@ -41,19 +66,17 @@ export interface CourseDocument {
   _id: string;
   title: string;
   subtitle: string;
-  slug: string;
   category: string;
   level: 'Foundation' | 'Intermediate' | 'Principal';
   price: number;
   durationHours: number;
-  rating: number;
   studentsCount: number;
   thumbnail: string;
+  thumbnailAssetId?: string | null;
   instructorId: string;
   instructorName: string;
   instructorRole: string;
   instructorSignature: string;
-  instructorAvatar: string;
   status: 'published' | 'pending' | 'draft';
   featured: boolean;
   skills: string[];
@@ -69,6 +92,7 @@ export interface EnrollmentDocument {
   enrolledAt: string;
   amountPaid: number;
   paymentRef: string;
+  paymentMode?: 'legacy' | 'free' | 'mock';
   completedLessonIds: string[];
   progressPercent: number;
   certificateIssuedAt?: string;
@@ -105,5 +129,4 @@ export interface MentorProfile {
   avatar: string;
   specialties: string[];
   studentsMentored: string;
-  coursesCount: number;
 }

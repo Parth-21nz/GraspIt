@@ -5,20 +5,18 @@ import type { CourseDocument, UserDocument } from '../types';
 interface CheckoutModalProps {
   course: CourseDocument | null;
   currentUser: UserDocument;
+  paymentsMode: 'disabled' | 'mock';
   onClose: () => void;
-  onConfirmEnrollment: (courseId: string, amountPaid: number) => Promise<string | null>;
+  onConfirmEnrollment: (courseId: string) => Promise<string | null>;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   course,
   currentUser,
   onClose,
+  paymentsMode,
   onConfirmEnrollment,
 }) => {
-  const [cardHolder, setCardHolder] = useState(currentUser.name);
-  const [cardNumber, setCardNumber] = useState('4532 •••• •••• 8891');
-  const [expiry, setExpiry] = useState('09/29');
-  const [cvc, setCvc] = useState('842');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,7 +29,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setSubmitting(true);
     setError(null);
     try {
-      setError(await onConfirmEnrollment(course._id, course.price));
+      setError(await onConfirmEnrollment(course._id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Enrollment failed. Please retry.');
     } finally {
       setSubmitting(false);
     }
@@ -49,7 +49,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         <div className="px-6 py-5 border-b border-[var(--border)] flex items-center justify-between">
           <div>
             <span className="text-[11px] uppercase tracking-[0.2em] text-[var(--red)] font-semibold block">
-              Instant Seat Allocation
+              Course Enrollment
             </span>
             <h2
               id="checkout-modal-title"
@@ -98,59 +98,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </div>
 
           {/* Simulated Payment Form */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="sm:col-span-2">
-              <label className="block text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">
-                Enrolling Learner Name
-              </label>
-              <input
-                type="text"
-                required
-                value={cardHolder}
-                onChange={(e) => setCardHolder(e.target.value)}
-                className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-primary)] focus:border-[var(--red)] focus:outline-none"
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="block text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">
-                Simulated Card Number (Instant Sandbox Mode)
-              </label>
-              <input
-                type="text"
-                required
-                value={cardNumber}
-                onChange={(e) => setCardNumber(e.target.value)}
-                className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-primary)] font-mono-num focus:border-[var(--red)] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">
-                Expiration
-              </label>
-              <input
-                type="text"
-                required
-                value={expiry}
-                onChange={(e) => setExpiry(e.target.value)}
-                className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-primary)] font-mono-num focus:border-[var(--red)] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">
-                Security Code
-              </label>
-              <input
-                type="text"
-                required
-                value={cvc}
-                onChange={(e) => setCvc(e.target.value)}
-                className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-primary)] font-mono-num focus:border-[var(--red)] focus:outline-none"
-              />
-            </div>
-          </div>
+          <p role="status" className="text-sm text-[var(--text-body)]">
+            {course.price === 0 ? 'This course is free to enroll in.' : paymentsMode === 'mock'
+              ? 'Demo checkout: enrollment is simulated. No payment details or real charges are involved.'
+              : 'Paid enrollment is currently unavailable. You can still enroll in free courses.'}
+          </p>
 
           {/* Included Deliverables */}
           <div className="border-t border-[var(--border)] pt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--text-body)]">
@@ -164,7 +116,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </span>
             <span className="inline-flex items-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5 text-[var(--red)]" />
-              Signed Completion Certificate
+              Course Completion Certificate
             </span>
           </div>
 
@@ -184,7 +136,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || (course.price > 0 && paymentsMode !== 'mock')}
               className="w-full sm:w-auto btn-crimson rounded-full px-7 py-3 text-xs font-semibold uppercase tracking-wider inline-flex items-center justify-center gap-2 cursor-pointer"
             >
               <Lock className="w-3.5 h-3.5 text-[var(--red)]" />

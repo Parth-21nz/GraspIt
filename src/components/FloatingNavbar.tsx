@@ -1,10 +1,11 @@
 import React from 'react';
 import { LogOut, LogIn, Layers } from 'lucide-react';
-import type { UserDocument } from '../types';
+import type { AppView, UserDocument } from '../types';
+import { UserAvatar } from './UserAvatar';
 
 interface FloatingNavbarProps {
-  activeView: 'landing' | 'workspace' | 'auth';
-  setActiveView: (view: 'landing' | 'workspace' | 'auth') => void;
+  activeView: AppView;
+  setActiveView: (view: AppView) => void;
   currentUser: UserDocument | null;
   onLogout: () => void;
   onOpenAuth: () => void;
@@ -77,6 +78,7 @@ export const FloatingNavbar: React.FC<FloatingNavbarProps> = ({
             <>
               <button
                 type="button"
+                aria-label={activeView === 'workspace' ? 'Home' : `Open ${currentUser.role} workspace`}
                 onClick={() =>
                   setActiveView(
                     activeView === 'workspace' ? 'landing' : 'workspace'
@@ -85,21 +87,27 @@ export const FloatingNavbar: React.FC<FloatingNavbarProps> = ({
                 className="btn-secondary-outline rounded-full px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 cursor-pointer"
               >
                 <Layers className="w-3.5 h-3.5 text-[var(--red)]" />
-                <span>
+                <span className="hidden sm:inline">
                   {activeView === 'workspace'
                     ? 'Home'
                     : `${currentUser.role.toUpperCase()} Portal`}
                 </span>
               </button>
 
+              <button type="button" onClick={() => setActiveView('profile')} aria-label="My profile" aria-current={activeView === 'profile' ? 'page' : undefined} className="inline-flex shrink-0 items-center gap-2 rounded-full p-0.5 text-xs text-[var(--text-body)] hover:text-[var(--text-primary)]">
+                <UserAvatar name={currentUser.name} avatar={currentUser.avatar} className="h-8 w-8" />
+                <span className="hidden lg:inline">Profile</span>
+              </button>
+
               <button
                 type="button"
                 onClick={onLogout}
+                aria-label="Logout"
                 title={`Signed in as ${currentUser.name} (${currentUser.role})`}
                 className="btn-crimson rounded-full px-3 sm:px-4 md:px-5 py-1.5 sm:py-2 text-xs font-semibold whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5 text-[var(--red)]" />
-                <span>Logout</span>
+                <span className="hidden sm:inline">Logout</span>
               </button>
             </>
           ) : (

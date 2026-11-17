@@ -546,9 +546,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                         </div>
                         <div className="text-sm font-semibold text-[var(--text-primary)]">
                           {course.instructorName}{' '}
-                          <span className="text-[var(--red)] font-normal">
+                          {course.instructorRole && <span className="text-[var(--red)] font-normal">
                             · {course.instructorRole}
-                          </span>
+                          </span>}
                         </div>
                       </div>
 

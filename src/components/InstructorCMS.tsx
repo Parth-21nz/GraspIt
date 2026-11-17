@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Plus,
   BookOpen,
@@ -22,6 +22,7 @@ import type {
   CourseModule,
   EnrollmentDocument,
   UserDocument,
+  UploadAssetDocument,
 } from '../types';
 
 interface InstructorCMSProps {
@@ -29,6 +30,7 @@ interface InstructorCMSProps {
   courses: CourseDocument[];
   categories: CategoryDocument[];
   enrollments: EnrollmentDocument[];
+  onUploadCover: (file: File, progress: (percent: number) => void, signal: AbortSignal) => Promise<UploadAssetDocument>;
   onCreateCourse: (payload: Partial<CourseDocument>) => Promise<void>;
   onUpdateCourse: (
     courseId: string,
@@ -59,6 +61,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
   categories,
   enrollments,
   onCreateCourse,
+  onUploadCover,
   onUpdateCourse,
   onDeleteCourse,
   onCreateCategory,
@@ -80,6 +83,13 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
   const [price, setPrice] = useState<string>('');
   const [durationHours, setDurationHours] = useState<string>('');
   const [thumbnail, setThumbnail] = useState<string>('');
+  const [thumbnailAssetId, setThumbnailAssetId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [retryFile, setRetryFile] = useState<File | null>(null);
+  const uploadAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => uploadAbort.current?.abort(), []);
   const [thumbnailFileName, setThumbnailFileName] = useState<string>('');
   const [skillsInput, setSkillsInput] = useState('');
   const [outcomesInput, setOutcomesInput] = useState('');
@@ -102,19 +112,12 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
     (c) => c.status === 'pending'
   ).length;
   const totalStudents = courses.reduce((acc, c) => acc + c.studentsCount, 0);
-  const totalCatalogRevenue = courses.reduce(
-    (acc, c) =>
-      acc +
-      c.price *
-        (c.studentsCount > 0 ? Math.max(1, Math.round(c.studentsCount * 0.12)) : 0),
-    0
-  );
-  const directEnrollmentsRevenue = enrollments.reduce(
-    (acc, e) => acc + e.amountPaid,
-    0
-  );
+  const sampleBookingValue = enrollments.filter((e) => e.paymentMode !== 'free').reduce((sum, e) => sum + e.amountPaid, 0);
 
   const resetForm = () => {
+    uploadAbort.current?.abort();
+    setUploading(false); setUploadError(null); setRetryFile(null); setUploadProgress(0);
+    setThumbnailAssetId(null);
     setEditingCourseId(null);
     setTitle('');
     setSubtitle('');
@@ -135,6 +138,9 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
   };
 
   const startEditingCourse = (course: CourseDocument) => {
+    uploadAbort.current?.abort();
+    setUploading(false); setUploadError(null); setRetryFile(null); setUploadProgress(0);
+    setThumbnailAssetId(course.thumbnailAssetId || null);
     setEditingCourseId(course._id);
     setTitle(course.title);
     setSubtitle(course.subtitle);
@@ -161,27 +167,31 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
     setActiveTab('builder');
   };
 
-  const handleCoverImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      setFormError('Please select a valid image file (PNG, JPG, WEBP, SVG).');
+  const uploadImage = async (file: File) => {
+    uploadAbort.current?.abort();
+    setUploading(false);
+    setRetryFile(file);
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+      setUploadError('Choose a JPEG, PNG or WebP image no larger than 5 MB.');
       return;
     }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setThumbnail(reader.result);
-        setThumbnailFileName(file.name);
-        setFormError(null);
-      }
-    };
-    reader.onerror = () => {
-      setFormError('Failed to read the selected image file.');
-    };
-    reader.readAsDataURL(file);
+    const controller = new AbortController();
+    uploadAbort.current = controller;
+    setUploading(true); setUploadProgress(0); setUploadError(null);
+    try {
+      const asset = await onUploadCover(file, setUploadProgress, controller.signal);
+      if (controller.signal.aborted) return;
+      setThumbnail(asset.url); setThumbnailAssetId(asset._id);
+      setThumbnailFileName(file.name); setRetryFile(null);
+    } catch (err) {
+      if (!controller.signal.aborted) setUploadError(err instanceof Error ? err.message : 'Image upload failed. Please retry.');
+    } finally {
+      if (!controller.signal.aborted) setUploading(false);
+    }
+  };
+  const handleCoverImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) void uploadImage(file);
   };
 
   const handleAddModule = () => {
@@ -260,6 +270,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
       }
     }
 
+    if (uploading || uploadError) { setFormError('Finish uploading the cover image before saving.'); return; }
     setSavingCourse(true);
 
     const skills = skillsInput
@@ -294,6 +305,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
           price: Math.max(0, Number(price) || 0),
           durationHours: Math.max(1, Number(durationHours) || 1),
           thumbnail,
+          thumbnailAssetId,
           skills,
           outcomes,
           modules: sanitizedModules,
@@ -308,11 +320,11 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
           price: Math.max(0, Number(price) || 0),
           durationHours: Math.max(1, Number(durationHours) || 1),
           thumbnail,
+          thumbnailAssetId,
           instructorId: currentUser._id,
           instructorName: currentUser.name,
           instructorRole: currentUser.title,
           instructorSignature: currentUser.name,
-          instructorAvatar: currentUser.avatar,
           status: 'pending',
           featured: false,
           skills,
@@ -325,6 +337,8 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
       }
       resetForm();
       setActiveTab('catalog');
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'The course could not be saved. Please retry.');
     } finally {
       setSavingCourse(false);
     }
@@ -348,7 +362,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
             02 · Instructor Content Management System
           </span>
           <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--text-primary)]">
-            Curriculum Studio & Revenue Console
+            Curriculum Studio & Demo Analytics
           </h1>
           <p className="text-sm text-[var(--text-body)] mt-1">
             Faculty Member: {currentUser.name} · {currentUser.title}
@@ -395,7 +409,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                 : 'btn-secondary-outline'
             }`}
           >
-            Revenue & Categories
+            Demo Analytics & Categories
           </button>
         </div>
       </div>
@@ -422,17 +436,17 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
         <div className="p-6 rounded-[22px] bg-[var(--surface)] border border-[var(--border)]">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs uppercase tracking-wider text-[var(--text-muted)]">
-              Gross Track Revenue
+              Sample Booking Value
             </span>
             <span className="icon-circle-crimson">
               <IndianRupee className="w-4 h-4" />
             </span>
           </div>
           <div className="font-display text-3xl font-bold text-[var(--text-primary)] tabular-nums">
-            ₹{(totalCatalogRevenue + directEnrollmentsRevenue).toLocaleString('en-IN')}
+            ₹{sampleBookingValue.toLocaleString('en-IN')}
           </div>
           <div className="text-xs text-[var(--red)] mt-1 font-mono-num">
-            +18.4% vs. prior cohort cycle
+            Sample and mock enrollments; no real charges
           </div>
         </div>
 
@@ -793,12 +807,22 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={uploading || savingCourse}
                 onChange={handleCoverImageUpload}
                 className="hidden"
                 id="course-cover-upload-input"
               />
 
+              {uploading && <div role="status" className="mb-3 text-sm text-[var(--text-body)]">
+                <progress aria-label="Cover upload progress" max={100} value={uploadProgress} className="w-full" />
+                {uploadProgress < 99 ? `Uploading image: ${uploadProgress}%` : 'Processing image…'}
+              </div>}
+              {uploadError && <div role="alert" className="mb-3 text-sm text-[var(--red)]">
+                <p>{uploadError}</p>
+                {retryFile && <button type="button" disabled={uploading} className="underline mt-1" onClick={() => void uploadImage(retryFile)}>Retry upload</button>}
+                <button type="button" className="underline ml-3" onClick={() => { setUploadError(null); setRetryFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}>Dismiss</button>
+              </div>}
               {!thumbnail ? (
                 <label
                   htmlFor="course-cover-upload-input"
@@ -811,7 +835,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                     Click to Upload Course Cover Image
                   </div>
                   <div className="text-[11px] text-[var(--text-muted)]">
-                    Supports PNG, JPG, WEBP, or SVG (16:9 or 4:3 recommended)
+                    JPEG, PNG or WebP up to 5 MB (16:9 or 4:3 recommended)
                   </div>
                 </label>
               ) : (
@@ -837,6 +861,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                   <button
                     type="button"
                     onClick={() => {
+                      uploadAbort.current?.abort(); setUploading(false); setUploadError(null); setRetryFile(null); setThumbnailAssetId(null);
                       setThumbnail('');
                       setThumbnailFileName('');
                       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1095,7 +1120,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
             </button>
             <button
               type="submit"
-              disabled={savingCourse}
+              disabled={savingCourse || uploading || Boolean(uploadError)}
               className="btn-crimson rounded-full px-8 py-3 text-xs font-semibold uppercase tracking-wider inline-flex items-center gap-2 cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4 text-[var(--red)]" />
@@ -1118,10 +1143,10 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
           <div className="lg:col-span-7 rounded-[26px] bg-[var(--surface)] border border-[var(--border)] overflow-hidden">
             <div className="px-6 py-5 border-b border-[var(--border)]">
               <h3 className="text-lg font-bold text-[var(--text-primary)]">
-                Track Performance & Revenue Ledger
+                Sample Enrollment Ledger
               </h3>
               <p className="text-xs text-[var(--text-muted)]">
-                Tabular breakdown of enrollments, unit pricing, and gross track bookings.
+                Sample and mock bookings for demonstration. No actual revenue is collected.
               </p>
             </div>
 
@@ -1133,16 +1158,12 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                     <th className="py-3.5 px-4">Status</th>
                     <th className="py-3.5 px-4 text-right">Tuition</th>
                     <th className="py-3.5 px-4 text-right">Learners</th>
-                    <th className="py-3.5 px-6 text-right">Est. Revenue</th>
+                    <th className="py-3.5 px-6 text-right">Sample Bookings</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)] text-sm">
                   {courses.map((c) => {
-                    const rev =
-                      c.price *
-                      (c.studentsCount > 0
-                        ? Math.max(1, Math.round(c.studentsCount * 0.12))
-                        : 0);
+                    const rev = enrollments.filter((e) => e.courseId === c._id && e.paymentMode !== 'free').reduce((sum, e) => sum + e.amountPaid, 0);
                     return (
                       <tr
                         key={c._id}
