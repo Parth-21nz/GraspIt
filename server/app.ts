@@ -232,6 +232,9 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
   app.use(helmet({
+    // YouTube rejects embeds without a Referer (error 153). Send only the
+    // site's origin to cross-origin HTTPS players, never the lesson URL.
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     contentSecurityPolicy: { directives: {
       defaultSrc: ["'self'"], scriptSrc: ["'self'", ...(config.nodeEnv === 'development' ? ["'unsafe-inline'"] : [])],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],

@@ -143,11 +143,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   return (
     <main className="bg-[var(--bg)] text-[var(--text-primary)]">
       {/* ═══════════════════════════════════════════════════════════════════
-          1. HERO SECTION (Full-Viewport, Layered Depth, Right Floating Card)
+          1. HERO SECTION (Layered Depth, Right Floating Card)
          ═══════════════════════════════════════════════════════════════════ */}
       <section
         id="home"
-        className="relative min-h-screen w-full overflow-hidden flex items-center pt-28 pb-16 lg:py-32 border-b border-[var(--border)]"
+        className="relative w-full overflow-hidden pt-28 pb-12 md:pt-28 lg:pt-28 lg:pb-16 border-b border-[var(--border)]"
       >
         {/* Layer 1: Full-Bleed High-Contrast Candid Study/Collaboration Photo */}
         <div className="absolute inset-0 z-0 bg-[var(--surface)]">
@@ -171,17 +171,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {/* Layer 2: Hero Content Container */}
         <div className="relative z-10 w-full max-w-[1280px] mx-auto px-6 md:px-12">
-          <div className="flex flex-col lg:block relative min-h-[620px]">
+          <div className="flex flex-col lg:block relative lg:min-h-[560px]">
             {/* LEFT TEXT COLUMN */}
-            <div className="w-full lg:w-[49%] flex flex-col justify-center py-4 lg:py-12">
-              {/* Eyebrow Badge */}
-              <div className="inline-flex items-center gap-2 self-start rounded-full px-4 py-1.5 border border-[var(--border)] bg-[var(--surface)]/85 mb-6">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--red)]" />
-                <span className="text-xs uppercase tracking-[0.18em] text-[var(--text-body)] font-semibold whitespace-nowrap">
-                  Future Focused Learning
-                </span>
-              </div>
-
+            <div className="w-full lg:w-[49%] flex flex-col justify-center py-2 lg:py-4">
               {/* Three-Line Bold Headline */}
               <h1
                 className="font-sans-ui font-extrabold tracking-tight leading-[1.05] mb-6"
@@ -213,9 +205,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   className="btn-crimson rounded-full px-7 py-3.5 text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap cursor-pointer"
                 >
                   <span>
-                    {currentUser
-                      ? `Open ${currentUser.role.toUpperCase()} Portal`
-                      : 'Start Learning'}
+                    {currentUser ? 'My Learning' : 'Start Learning'}
                   </span>
                   <ArrowRight className="w-4 h-4 text-[var(--red)]" />
                 </button>
@@ -230,7 +220,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
 
             {/* RIGHT FLOATING IMAGE CARD */}
-            <div className="w-full lg:w-[44%] mt-10 lg:mt-0 lg:absolute lg:top-14 lg:-right-6 xl:-right-10 lg:bottom-2 rounded-[30px] overflow-hidden border border-[var(--border)] bg-[var(--surface)] relative min-h-[420px] sm:min-h-[480px]">
+            <div className="w-full lg:w-[44%] mt-8 lg:mt-0 lg:absolute lg:top-4 lg:-right-6 xl:-right-10 lg:bottom-2 rounded-[30px] overflow-hidden border border-[var(--border)] bg-[var(--surface)] relative min-h-[420px] sm:min-h-[480px]">
               <img
                 src="/images/hero_floating_mentor_card_1794504815575.jpg"
                 alt="Principal mentor reviewing distributed code architecture with a fellow engineer"
@@ -674,6 +664,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   <span className="text-[var(--text-muted)]">
                     Mentored:{' '}
                     <strong className="text-[var(--text-primary)] font-mono-num">
+                      {/* Fixed editorial/demo figure; deliberately independent of platform enrollments. */}
                       {mentor.studentsMentored}
                     </strong>
                   </span>

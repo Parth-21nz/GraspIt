@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { instructorAnalytics } from '../lib/instructorAnalytics';
 import {
   Plus,
   BookOpen,
@@ -111,8 +112,8 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
   const pendingCoursesCount = courses.filter(
     (c) => c.status === 'pending'
   ).length;
-  const totalStudents = courses.reduce((acc, c) => acc + c.studentsCount, 0);
-  const sampleBookingValue = enrollments.filter((e) => e.paymentMode !== 'free').reduce((sum, e) => sum + e.amountPaid, 0);
+  const analytics = useMemo(() => instructorAnalytics(courses, enrollments), [courses, enrollments]);
+  const { sampleBookingValue } = analytics;
 
   const resetForm = () => {
     uploadAbort.current?.abort();
@@ -453,17 +454,17 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
         <div className="p-6 rounded-[22px] bg-[var(--surface)] border border-[var(--border)]">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs uppercase tracking-wider text-[var(--text-muted)]">
-              Total Enrolled Engineers
+              Unique Learners
             </span>
             <span className="icon-circle-crimson">
               <Users className="w-4 h-4" />
             </span>
           </div>
           <div className="font-display text-3xl font-bold text-[var(--text-primary)] tabular-nums">
-            {totalStudents.toLocaleString()}
+            {analytics.uniqueStudents.toLocaleString()}
           </div>
           <div className="text-xs text-[var(--text-muted)] mt-1">
-            Across {publishedCoursesCount} published tracks
+            {analytics.enrollmentCount.toLocaleString()} course enrollments · {publishedCoursesCount} published tracks
           </div>
         </div>
 
@@ -592,7 +593,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                           ₹{course.price.toLocaleString('en-IN')}
                         </div>
                         <div className="text-xs text-[var(--text-muted)] font-mono-num">
-                          {course.studentsCount.toLocaleString()} learners
+                          {analytics.byCourse.get(course._id)!.learners.toLocaleString()} learners
                         </div>
                       </div>
 
@@ -1163,7 +1164,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                 </thead>
                 <tbody className="divide-y divide-[var(--border)] text-sm">
                   {courses.map((c) => {
-                    const rev = enrollments.filter((e) => e.courseId === c._id && e.paymentMode !== 'free').reduce((sum, e) => sum + e.amountPaid, 0);
+                    const courseAnalytics = analytics.byCourse.get(c._id)!;
                     return (
                       <tr
                         key={c._id}
@@ -1179,10 +1180,10 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                           ₹{c.price.toLocaleString('en-IN')}
                         </td>
                         <td className="py-4 px-4 text-right font-mono-num text-[var(--text-primary)] whitespace-nowrap">
-                          {c.studentsCount.toLocaleString()}
+                          {courseAnalytics.learners.toLocaleString()}
                         </td>
                         <td className="py-4 px-6 text-right font-mono-num font-bold text-[var(--text-primary)] whitespace-nowrap">
-                          ₹{rev.toLocaleString('en-IN')}
+                          ₹{courseAnalytics.sampleBookingValue.toLocaleString('en-IN')}
                         </td>
                       </tr>
                     );

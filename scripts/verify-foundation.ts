@@ -104,6 +104,7 @@ try {
   await check('Helmet CSP permits supported media and blocks script/embedding defaults', async () => {
     const res = await request(demoApp).get('/api/health');
     assert.equal(res.headers['x-content-type-options'], 'nosniff');
+    assert.equal(res.headers['referrer-policy'], 'strict-origin-when-cross-origin');
     const csp = res.headers['content-security-policy'];
     assert(csp.includes("script-src 'self';")); assert(!csp.includes('unsafe-eval'));
     assert(csp.includes('https://res.cloudinary.com')); assert(csp.includes('https://www.youtube.com'));
@@ -226,6 +227,31 @@ try {
     const bootstrap = await request(mockApp).get('/api/bootstrap');
     assert.equal(bootstrap.body.demoMode, false); assert.equal(bootstrap.body.paymentsMode, 'mock');
   });
+  const learningCourse = await db.course.create({ data: {
+    id: 'all_role_learning', title: 'Learning for every role', category: 'Verification', status: 'published', price: 0,
+    instructorId: 'foundation_instructor', instructorSignature: 'Other Instructor', skills: [], outcomes: [],
+    modules: { create: { id: 'all_role_module', title: 'Module', position: 0, lessons: { create: {
+      id: 'all_role_lesson', title: 'Lesson', position: 0, videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ', keyTakeaways: [],
+    } } } },
+  } });
+  let firstLearnerEnrollment = '';
+  for (const actor of [{ role: 'student', id: 'usr_student_01', token: student }, { role: 'instructor', id: 'usr_instructor_01', token: instructor }, { role: 'admin', id: 'usr_admin_01', token: admin }]) {
+    await check(`${actor.role} can learn, save notes and earn a certificate without changing role`, async () => {
+      const enrolled = await request(demoApp).post('/api/enrollments').auth(actor.token, { type: 'bearer' }).send({ courseId: learningCourse.id });
+      assert.equal(enrolled.status, 201); assert.equal(enrolled.body.userId, actor.id);
+      const boot = await request(demoApp).get('/api/bootstrap').auth(actor.token, { type: 'bearer' });
+      assert.equal(boot.body.me.role, actor.role);
+      assert(boot.body.enrollments.some((e: any) => e._id === enrolled.body._id && e.userId === actor.id));
+      assert(boot.body.courses.find((c: any) => c._id === learningCourse.id).modules[0].lessons[0].videoUrl);
+      assert(boot.body.notes.every((note: any) => note.userId === actor.id));
+      const completed = await request(demoApp).patch(`/api/enrollments/${enrolled.body._id}/progress`).auth(actor.token, { type: 'bearer' }).send({ lessonId: 'all_role_lesson' });
+      assert.equal(completed.status, 200); assert.equal(completed.body.progressPercent, 100); assert(completed.body.certificateIssuedAt);
+      const note = await request(demoApp).post('/api/notes').auth(actor.token, { type: 'bearer' }).send({ courseId: learningCourse.id, lessonId: 'all_role_lesson', lessonTitle: 'Lesson', content: 'Personal learning notes', timestampFormatted: '00:00' });
+      assert.equal(note.status, 201); assert.equal(note.body.userId, actor.id);
+      if (firstLearnerEnrollment) assert.equal((await request(demoApp).patch(`/api/enrollments/${firstLearnerEnrollment}/progress`).auth(actor.token, { type: 'bearer' }).send({ lessonId: 'all_role_lesson' })).status, 404);
+      else firstLearnerEnrollment = enrolled.body._id;
+    });
+  }
   await check('login rate limiting cannot be bypassed with spoofed forwarding headers', async () => {
     const limited = createApp({ prisma: db, config, storage });
     for (let i = 0; i < 10; i++) assert.equal((await request(limited).post('/api/auth/login').set('X-Forwarded-For', `10.0.0.${i + 1}`).send({ email: 'missing@example.test', password: 'wrong' })).status, 401);

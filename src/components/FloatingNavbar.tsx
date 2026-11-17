@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, LogIn, Layers } from 'lucide-react';
+import { LogOut, LogIn, Layers, BookOpen } from 'lucide-react';
 import type { AppView, UserDocument } from '../types';
 import { UserAvatar } from './UserAvatar';
 
@@ -59,7 +59,7 @@ export const FloatingNavbar: React.FC<FloatingNavbarProps> = ({
         </a>
 
         {/* Zone 2: Four centered text links (Home, Courses, Mentors, Contact) */}
-        <div className="hidden md:flex items-center justify-center gap-7 text-sm font-medium text-[var(--text-body)]">
+        <div className="hidden lg:flex items-center justify-center gap-6 text-sm font-medium text-[var(--text-body)]">
           {navItems.map((item) => (
             <a
               key={item.label}
@@ -78,21 +78,25 @@ export const FloatingNavbar: React.FC<FloatingNavbarProps> = ({
             <>
               <button
                 type="button"
-                aria-label={activeView === 'workspace' ? 'Home' : `Open ${currentUser.role} workspace`}
-                onClick={() =>
-                  setActiveView(
-                    activeView === 'workspace' ? 'landing' : 'workspace'
-                  )
-                }
+                aria-label="My Learning"
+                aria-current={activeView === 'learning' || (activeView === 'workspace' && currentUser.role === 'student') ? 'page' : undefined}
+                onClick={() => setActiveView('learning')}
+                className="btn-secondary-outline rounded-full px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-[var(--red)]" />
+                <span className="hidden sm:inline">My Learning</span>
+              </button>
+
+              {currentUser.role !== 'student' && <button
+                type="button"
+                aria-label={currentUser.role === 'instructor' ? 'Teaching workspace' : 'Admin workspace'}
+                aria-current={activeView === 'workspace' ? 'page' : undefined}
+                onClick={() => setActiveView('workspace')}
                 className="btn-secondary-outline rounded-full px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 cursor-pointer"
               >
                 <Layers className="w-3.5 h-3.5 text-[var(--red)]" />
-                <span className="hidden sm:inline">
-                  {activeView === 'workspace'
-                    ? 'Home'
-                    : `${currentUser.role.toUpperCase()} Portal`}
-                </span>
-              </button>
+                <span className="hidden sm:inline">{currentUser.role === 'instructor' ? 'Teaching' : 'Admin'}</span>
+              </button>}
 
               <button type="button" onClick={() => setActiveView('profile')} aria-label="My profile" aria-current={activeView === 'profile' ? 'page' : undefined} className="inline-flex shrink-0 items-center gap-2 rounded-full p-0.5 text-xs text-[var(--text-body)] hover:text-[var(--text-primary)]">
                 <UserAvatar name={currentUser.name} avatar={currentUser.avatar} className="h-8 w-8" />

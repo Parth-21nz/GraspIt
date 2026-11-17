@@ -25,7 +25,9 @@
     "verify:dev": "tsx scripts/verify-dev.ts",
     "verify:cleanup": "tsx scripts/verify-schema-cleanup.ts",
     "verify:profile": "tsx scripts/verify-profile.ts",
-    "test": "npm run verify:step2 && npm run verify:foundation && npm run verify:cleanup && npm run verify:profile && npm run verify:dev"
+    "verify:analytics": "tsx --test scripts/verify-instructor-analytics.ts",
+    "verify:loading": "tsx --test scripts/verify-loading.ts",
+    "test": "npm run verify:step2 && npm run verify:foundation && npm run verify:cleanup && npm run verify:profile && npm run verify:analytics && npm run verify:loading && npm run verify:dev"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

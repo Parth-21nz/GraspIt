@@ -14,6 +14,8 @@ import { CheckoutModal } from './components/CheckoutModal';
 import { AuthPage } from './components/AuthPage';
 import { ProfilePage } from './components/ProfilePage';
 import { uploadImage } from './api/uploads';
+import { createRequestGate } from './lib/latestRequest';
+import { LoadingScreen, LoadErrorScreen } from './components/LoadingScreen';
 import type {
   CategoryDocument,
   CourseDocument,
@@ -47,7 +49,7 @@ function readStorage(key: string): string | null {
 
 function viewFromHash(): AppView {
   const view = window.location.hash.slice(1);
-  return view === 'profile' || view === 'workspace' || view === 'auth' ? view : 'landing';
+  return view === 'profile' || view === 'workspace' || view === 'learning' || view === 'auth' ? view : 'landing';
 }
 
 export default function App() {
@@ -59,6 +61,9 @@ export default function App() {
   const [inquiries, setInquiries] = useState<InquiryDocument[]>([]);
   const [mentors, setMentors] = useState<MentorProfile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingMessage, setLoadingMessage] = useState('Loading GraspIt…');
+  const [bootstrapError, setBootstrapError] = useState(false);
+  const [bootstrapRequests] = useState(createRequestGate);
 
   // Authenticated User & Active View State (No Role Switcher)
   const [currentUserId, setCurrentUserId] = useState<string | null>(() =>
@@ -67,14 +72,25 @@ export default function App() {
   const [token, setToken] = useState<string | null>(() =>
     readStorage(TOKEN_STORAGE_KEY)
   );
+  const sessionToken = useRef(token);
   const [demoMode, setDemoMode] = useState<boolean>(false);
   const [paymentsMode, setPaymentsMode] = useState<'disabled' | 'mock'>('disabled');
   const profileDirty = useRef(false);
   const setProfileDirty = useCallback((dirty: boolean) => { profileDirty.current = dirty; }, []);
 
   const clearSession = () => {
+    bootstrapRequests.cancel();
+    sessionToken.current = null;
+    setLoading(true);
+    setBootstrapError(false);
+    setLoadingMessage('Returning to sign in…');
     setToken(null);
     setCurrentUserId(null);
+    setUsers([]); setCourses([]); setEnrollments([]); setNotes([]); setInquiries([]);
+    setSelectedPlayerCourseId(null); setCheckoutCourse(null);
+    profileDirty.current = false;
+    setViewState('auth');
+    window.history.replaceState(null, '', '#auth');
     try {
       localStorage.removeItem(AUTH_STORAGE_KEY);
       localStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -84,10 +100,12 @@ export default function App() {
   };
 
   const apiFetch = (input: string, init: RequestInit = {}) => {
+    const requestToken = token;
     const headers = new Headers(init.headers);
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    if (requestToken) headers.set('Authorization', `Bearer ${requestToken}`);
     return fetch(input, { ...init, headers }).then((res) => {
-      if (res.status === 401 && token) clearSession();
+      if (requestToken !== sessionToken.current) throw new DOMException('Session changed.', 'AbortError');
+      if (res.status === 401 && requestToken) clearSession();
       return res;
     });
   };
@@ -121,17 +139,27 @@ export default function App() {
   const [pendingCourseAfterAuth, setPendingCourseAfterAuth] =
     useState<CourseDocument | null>(null);
 
-  const loadBootstrap = async () => {
+  const loadBootstrap = async (requestToken = sessionToken.current, message = requestToken ? 'Loading your workspace…' : 'Loading GraspIt…') => {
+    const request = bootstrapRequests.start();
+    const isCurrent = () => request.isCurrent() && requestToken === sessionToken.current;
+    const timeout = window.setTimeout(() => request.abort(), 20_000);
+    setLoading(true); setLoadingMessage(message); setBootstrapError(false);
     try {
-      const res = await apiFetch('/api/bootstrap');
+      // Pass this session's token explicitly; a stale render must never send
+      // an anonymous request after a successful login.
+      const res = await fetch('/api/bootstrap', { signal: request.signal, cache: 'no-store', headers: requestToken ? { Authorization: `Bearer ${requestToken}` } : {} });
+      if (!isCurrent()) return false;
+      if (res.status === 401 && requestToken) { clearSession(); return false; }
       if (!res.ok) throw new Error('Failed to load initial data');
       const data = await res.json();
+      if (!isCurrent()) return false;
+      if (requestToken && !data.me) {
+        clearSession();
+        return false;
+      }
       setDemoMode(Boolean(data.demoMode));
       setPaymentsMode(data.paymentsMode === 'mock' ? 'mock' : 'disabled');
-      if (token && !data.me) {
-        // Stored session is expired or invalid
-        clearSession();
-      }
+      setCurrentUserId(data.me?._id ?? null);
       setUsers(data.users || []);
       setCategories(data.categories || []);
       setCourses(data.courses || []);
@@ -139,15 +167,20 @@ export default function App() {
       setNotes(data.notes || []);
       setInquiries(data.inquiries || []);
       setMentors(data.mentors || []);
+      return true;
     } catch (err) {
-      console.error('Error loading GraspIt bootstrap data:', err);
+      if (!isCurrent()) return false;
+      setBootstrapError(true);
+      return false;
     } finally {
-      setLoading(false);
+      window.clearTimeout(timeout);
+      if (isCurrent()) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadBootstrap();
+    void loadBootstrap(token);
+    return () => bootstrapRequests.cancel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -159,15 +192,12 @@ export default function App() {
     authenticatedUser: UserDocument,
     authToken: string
   ) => {
+    bootstrapRequests.cancel();
+    sessionToken.current = authToken;
+    setLoading(true); setLoadingMessage('Loading your workspace…'); setBootstrapError(false);
     setToken(authToken);
-    setUsers((prev) => {
-      const exists = prev.some((u) => u._id === authenticatedUser._id);
-      return exists
-        ? prev.map((u) =>
-            u._id === authenticatedUser._id ? authenticatedUser : u
-          )
-        : [...prev, authenticatedUser];
-    });
+    setUsers([authenticatedUser]);
+    setCourses([]); setEnrollments([]); setNotes([]); setInquiries([]);
     setCurrentUserId(authenticatedUser._id);
     try {
       localStorage.setItem(AUTH_STORAGE_KEY, authenticatedUser._id);
@@ -181,7 +211,7 @@ export default function App() {
       setPendingCourseAfterAuth(null);
       setActiveView('landing');
     } else {
-      setActiveView(activeView === 'profile' ? 'profile' : 'workspace');
+      setActiveView(activeView === 'profile' || activeView === 'learning' ? activeView : authenticatedUser.role === 'student' ? 'learning' : 'workspace');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -224,22 +254,13 @@ export default function App() {
       }),
     });
     if (res.ok) {
-      const enrollment: EnrollmentDocument = await res.json();
-      setEnrollments((prev) => {
-        const exists = prev.some((e) => e._id === enrollment._id);
-        return exists ? prev : [enrollment, ...prev];
-      });
-      setCourses((prev) =>
-        prev.map((c) =>
-          c._id === courseId ? { ...c, studentsCount: c.studentsCount + 1 } : c
-        )
-      );
+      await res.json();
       // Reload so the newly enrolled course arrives with its lesson video URLs
       // (they are withheld from users who are not enrolled).
-      await loadBootstrap();
       setCheckoutCourse(null);
       setSelectedPlayerCourseId(courseId);
-      setActiveView('workspace');
+      setActiveView('learning');
+      await loadBootstrap(token, 'Opening your course…');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return null;
     }
@@ -256,6 +277,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lessonId }),
     });
+    if (!res.ok) throw new Error(await responseError(res, 'Your progress could not be saved. Please retry.'));
     if (res.ok) {
       const updated: EnrollmentDocument = await res.json();
       setEnrollments((prev) =>
@@ -280,6 +302,7 @@ export default function App() {
         userId: currentUser._id,
       }),
     });
+    if (!res.ok) throw new Error(await responseError(res, 'Your note could not be saved. Please retry.'));
     if (res.ok) {
       const created: LessonNoteDocument = await res.json();
       setNotes((prev) => [created, ...prev]);
@@ -288,6 +311,7 @@ export default function App() {
 
   const handleDeleteNote = async (noteId: string) => {
     const res = await apiFetch(`/api/notes/${noteId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await responseError(res, 'Your note could not be deleted. Please retry.'));
     if (res.ok) {
       setNotes((prev) => prev.filter((n) => n._id !== noteId));
     }
@@ -409,20 +433,8 @@ export default function App() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[var(--bg)] text-[var(--text-primary)] flex items-center justify-center p-6">
-        <div className="p-8 rounded-[24px] bg-[var(--surface)] border border-[var(--border)] text-center space-y-3 max-w-sm w-full">
-          <div className="font-display text-2xl font-bold tracking-tight">
-            GRASP<span className="text-[var(--red)]">IT</span>
-          </div>
-          <p className="text-xs uppercase tracking-widest text-[var(--text-muted)]">
-            Initializing Curriculum & Workspaces...
-          </p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingScreen message={loadingMessage} />;
+  if (bootstrapError) return <LoadErrorScreen onRetry={() => void loadBootstrap()} onSignOut={token ? clearSession : undefined} />;
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text-primary)] relative">
@@ -439,7 +451,7 @@ export default function App() {
       />
 
       {/* 2. Main View Switch: Auth Page vs. Landing Page vs. Role Workspace */}
-      {activeView === 'auth' || (activeView === 'profile' && !currentUser) ? (
+      {activeView === 'auth' || ((activeView === 'profile' || activeView === 'learning') && !currentUser) ? (
         <AuthPage
           showDemoAccounts={demoMode}
           onAuthSuccess={handleAuthSuccess}
@@ -472,7 +484,7 @@ export default function App() {
               return;
             }
             setSelectedPlayerCourseId(courseId);
-            setActiveView('workspace');
+            setActiveView('learning');
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           onCreateCategory={handleCreateCategory}
@@ -482,7 +494,7 @@ export default function App() {
               setActiveView('auth');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             } else {
-              setActiveView('workspace');
+              setActiveView('learning');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }
           }}
@@ -525,8 +537,8 @@ export default function App() {
             </button>
           </div>
 
-          {/* Authenticated User's Role Workspace */}
-          {currentUser.role === 'student' && (
+          {/* Learning is available to every role; management keeps its own permissions. */}
+          {(activeView === 'learning' || currentUser.role === 'student') && (
             <StudentDashboard
               currentUser={currentUser}
               courses={courses}
@@ -548,7 +560,7 @@ export default function App() {
             />
           )}
 
-          {currentUser.role === 'instructor' && (
+          {activeView === 'workspace' && currentUser.role === 'instructor' && (
             <InstructorCMS
               currentUser={currentUser}
               courses={courses.filter((course) => course.instructorId === currentUser._id)}
@@ -565,7 +577,7 @@ export default function App() {
             />
           )}
 
-          {currentUser.role === 'admin' && (
+          {activeView === 'workspace' && currentUser.role === 'admin' && (
             <AdminPortal
               currentUser={currentUser}
               users={users}

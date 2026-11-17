@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, ShieldCheck, CheckCircle2, Lock, ArrowRight, BookOpen, Clock } from 'lucide-react';
+import { X, ShieldCheck, CheckCircle2, Lock, ArrowRight, BookOpen, Clock, LoaderCircle } from 'lucide-react';
 import type { CourseDocument, UserDocument } from '../types';
 
 interface CheckoutModalProps {
@@ -26,6 +26,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -61,6 +62,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           <button
             type="button"
             onClick={onClose}
+            disabled={submitting}
             aria-label="Close checkout modal"
             className="icon-circle-crimson cursor-pointer"
           >
@@ -68,7 +70,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 md:p-8 space-y-6">
+        <form onSubmit={handleSubmit} aria-busy={submitting} className="p-6 md:p-8 space-y-6">
           {/* Selected Course Summary */}
           <div className="p-5 rounded-[20px] bg-[var(--surface-2)] border border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1.5">
@@ -130,6 +132,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             <button
               type="button"
               onClick={onClose}
+              disabled={submitting}
               className="w-full sm:w-auto btn-secondary-outline rounded-full px-6 py-3 text-xs font-semibold uppercase tracking-wider cursor-pointer"
             >
               Cancel
@@ -139,7 +142,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               disabled={submitting || (course.price > 0 && paymentsMode !== 'mock')}
               className="w-full sm:w-auto btn-crimson rounded-full px-7 py-3 text-xs font-semibold uppercase tracking-wider inline-flex items-center justify-center gap-2 cursor-pointer"
             >
-              <Lock className="w-3.5 h-3.5 text-[var(--red)]" />
+              {submitting ? <LoaderCircle aria-hidden="true" className="w-3.5 h-3.5 text-[var(--red)] motion-safe:animate-spin" /> : <Lock className="w-3.5 h-3.5 text-[var(--red)]" />}
               <span>
                 {submitting
                   ? 'Confirming Seat...'

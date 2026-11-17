@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Play,
   CheckCircle2,
@@ -12,6 +13,7 @@ import {
   AlertTriangle,
   RefreshCw,
   ExternalLink,
+  LoaderCircle,
 } from 'lucide-react';
 import type {
   CourseDocument,
@@ -183,6 +185,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [noteContent, setNoteContent] = useState('');
   const [noteTimestamp, setNoteTimestamp] = useState('');
   const [savingNote, setSavingNote] = useState(false);
+  const [pendingProgress, setPendingProgress] = useState<string | null>(null);
+  const [deletingNote, setDeletingNote] = useState<string | null>(null);
+  const [learningError, setLearningError] = useState<string | null>(null);
 
   // Certificate preview state
   const [certificateCourse, setCertificateCourse] = useState<{
@@ -211,8 +216,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const handleSaveNote = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activePair || !currentLesson || !noteContent.trim()) return;
+    if (!activePair || !currentLesson || !noteContent.trim() || savingNote) return;
     setSavingNote(true);
+    setLearningError(null);
     const currentVideoTime = videoRef.current
       ? formatSeconds(videoRef.current.currentTime)
       : '00:00';
@@ -226,9 +232,26 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       });
       setNoteContent('');
       setNoteTimestamp('');
+    } catch (err) {
+      setLearningError(err instanceof Error ? err.message : 'Your note could not be saved. Please retry.');
     } finally {
       setSavingNote(false);
     }
+  };
+
+  const toggleProgress = async (enrollmentId: string, lessonId: string) => {
+    if (pendingProgress) return;
+    setPendingProgress(lessonId); setLearningError(null);
+    try { await onToggleLessonProgress(enrollmentId, lessonId); }
+    catch (err) { setLearningError(err instanceof Error ? err.message : 'Your progress could not be saved. Please retry.'); }
+    finally { setPendingProgress(null); }
+  };
+  const deleteNote = async (noteId: string) => {
+    if (deletingNote) return;
+    setDeletingNote(noteId); setLearningError(null);
+    try { await onDeleteNote(noteId); }
+    catch (err) { setLearningError(err instanceof Error ? err.message : 'Your note could not be deleted. Please retry.'); }
+    finally { setDeletingNote(null); }
   };
 
   const recommendedCourses = courses.filter(
@@ -243,11 +266,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   return (
     <div className="space-y-10">
+      {learningError && <p role="alert" className="rounded-xl border border-[var(--red)] bg-[var(--surface)] p-4 text-sm text-red-300">{learningError}</p>}
       {/* Top Student Summary Header */}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 border-b border-[var(--border)] pb-8">
         <div>
           <span className="text-xs uppercase tracking-[0.2em] text-[var(--red)] font-semibold block mb-2">
-            01 · Student Learning Portal
+            01 · My Learning
           </span>
           <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--text-primary)]">
             Welcome back, {currentUser.name}
@@ -463,6 +487,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         title={currentLesson.title}
                         className="w-full h-full border-0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        referrerPolicy="strict-origin-when-cross-origin"
                         allowFullScreen
                         onError={() =>
                           setVideoPlaybackError(
@@ -501,11 +526,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          onToggleLessonProgress(
+                          void toggleProgress(
                             activePair.enrollment._id,
                             currentLesson._id
                           )
                         }
+                        disabled={Boolean(pendingProgress)}
+                        aria-busy={Boolean(pendingProgress)}
                         className={`rounded-full px-5 py-2.5 text-xs font-semibold uppercase tracking-wider inline-flex items-center gap-2 border transition-colors cursor-pointer ${
                           activePair.enrollment.completedLessonIds.includes(
                             currentLesson._id
@@ -514,9 +541,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             : 'btn-crimson'
                         }`}
                       >
-                        <CheckCircle2 className="w-4 h-4" />
+                        {pendingProgress ? <LoaderCircle aria-hidden="true" className="w-4 h-4 motion-safe:animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                         <span>
-                          {activePair.enrollment.completedLessonIds.includes(
+                          {pendingProgress ? 'Saving progress…' : activePair.enrollment.completedLessonIds.includes(
                             currentLesson._id
                           )
                             ? 'Lesson Completed'
@@ -581,11 +608,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       onChange={(e) => setNoteTimestamp(e.target.value)}
                       placeholder="MM:SS"
                       aria-label="Video timestamp"
+                      disabled={savingNote}
                       className="w-full sm:w-24 shrink-0 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2.5 text-xs font-mono-num text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--red)] focus:outline-none"
                     />
                     <input
                       type="text"
                       required
+                      disabled={savingNote}
                       value={noteContent}
                       onChange={(e) => setNoteContent(e.target.value)}
                       placeholder="Capture architectural insight, benchmark formula, or code takeaway..."
@@ -596,7 +625,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       disabled={savingNote}
                       className="w-full sm:w-auto shrink-0 btn-crimson rounded-lg px-5 py-2.5 text-xs font-semibold uppercase tracking-wider inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
                     >
-                      <Plus className="w-3.5 h-3.5 text-[var(--red)]" />
+                      {savingNote ? <LoaderCircle aria-hidden="true" className="w-3.5 h-3.5 text-[var(--red)] motion-safe:animate-spin" /> : <Plus className="w-3.5 h-3.5 text-[var(--red)]" />}
                       <span>{savingNote ? 'Saving...' : 'Save Note'}</span>
                     </button>
                   </form>
@@ -629,11 +658,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           </div>
                           <button
                             type="button"
-                            onClick={() => onDeleteNote(note._id)}
+                            onClick={() => void deleteNote(note._id)}
+                            disabled={Boolean(deletingNote)}
+                            aria-busy={deletingNote === note._id}
                             aria-label="Delete note"
                             className="text-[var(--text-muted)] hover:text-[var(--red)] transition-colors shrink-0 cursor-pointer p-1"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            {deletingNote === note._id ? <LoaderCircle aria-hidden="true" className="w-4 h-4 motion-safe:animate-spin" /> : <Trash2 className="w-4 h-4" />}
                           </button>
                         </div>
                       ))
@@ -722,17 +753,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      onToggleLessonProgress(
+                                      void toggleProgress(
                                         activePair.enrollment._id,
                                         lesson._id
                                       )
                                     }
+                                    disabled={Boolean(pendingProgress)}
+                                    aria-busy={pendingProgress === lesson._id}
                                     aria-label={
                                       done ? 'Mark incomplete' : 'Mark complete'
                                     }
                                     className="text-[var(--red)] cursor-pointer"
                                   >
-                                    {done ? (
+                                    {pendingProgress === lesson._id ? <LoaderCircle aria-hidden="true" className="w-4 h-4 motion-safe:animate-spin" /> : done ? (
                                       <CheckCircle2 className="w-4 h-4" />
                                     ) : (
                                       <Circle className="w-4 h-4 text-[var(--text-muted)] hover:text-[var(--red)]" />
@@ -790,14 +823,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       )}
 
       {/* Official Completion Certificate Modal */}
-      {certificateCourse && (
+      {certificateCourse && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0A0707]/85 backdrop-blur-md"
+          className="certificate-modal fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0A0707]/85 backdrop-blur-md"
           role="dialog"
           aria-modal="true"
+          aria-label="Course completion certificate"
         >
-          <div className="w-full max-w-3xl bg-[var(--surface)] border border-[var(--red)] rounded-[30px] p-8 md:p-12 relative overflow-hidden">
-            <div className="border border-[var(--border)] rounded-[22px] p-8 md:p-10 bg-[var(--bg)] space-y-6 text-center">
+          <div className="certificate-shell w-full max-w-3xl max-h-[90dvh] overflow-y-auto bg-[var(--surface)] border border-[var(--red)] rounded-[30px] p-8 md:p-12 relative">
+            <div className="certificate-paper border border-[var(--border)] rounded-[22px] p-8 md:p-10 bg-[var(--bg)] space-y-6 text-center">
               <div className="inline-flex items-center gap-2 rounded-full px-4 py-1 border border-[var(--red)] text-xs uppercase tracking-[0.2em] text-[var(--red)] font-semibold">
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>GraspIt Accredited Technical Credential</span>
@@ -826,12 +860,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4 text-left">
+              <div className="certificate-details grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4 text-left">
                 <div>
                   <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
                     Credential ID
                   </div>
-                  <div className="text-xs font-mono-num text-[var(--text-primary)] mt-1">
+                  <div className="break-words text-xs font-mono-num text-[var(--text-primary)] mt-1">
                     {certificateCourse.enrollment.paymentRef}-CERT
                   </div>
                 </div>
@@ -860,7 +894,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 mt-6">
+            <div className="certificate-actions flex flex-wrap items-center justify-end gap-3 mt-6">
               <button
                 type="button"
                 onClick={() => window.print()}
@@ -878,7 +912,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

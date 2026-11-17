@@ -21,6 +21,7 @@ const base = `http://127.0.0.1:${(server.address() as import('node:net').Address
 try {
   const html = await fetch(base);
   assert.equal(html.status, 200);
+  assert.equal(html.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
   const csp = html.headers.get('content-security-policy')!;
   assert(csp.includes("script-src 'self' 'unsafe-inline'"));
   assert(csp.includes('ws:')); assert(!csp.includes('unsafe-eval'));

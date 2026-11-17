@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Lock,
   Mail,
@@ -8,6 +8,7 @@ import {
   KeyRound,
   CheckCircle2,
   ArrowLeft,
+  LoaderCircle,
 } from 'lucide-react';
 import type { UserDocument, UserRole } from '../types';
 
@@ -69,15 +70,21 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [title, setTitle] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const authRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => authRequest.current?.abort(), []);
 
   const handleLogin = async (
     targetEmail: string,
     targetPassword: string
   ) => {
+    if (submitting) return;
+    const controller = new AbortController();
+    authRequest.current?.abort(); authRequest.current = controller;
     setError(null);
     setSubmitting(true);
     try {
       const res = await fetch('/api/auth/login', {
+        signal: controller.signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -86,20 +93,22 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         }),
       });
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (!res.ok) {
         setError(data.error || 'Authentication failed. Check your credentials.');
         return;
       }
       onAuthSuccess(data.user as UserDocument, data.token as string);
     } catch {
-      setError('Network error while attempting to sign in.');
+      if (!controller.signal.aborted) setError('Network error while attempting to sign in.');
     } finally {
-      setSubmitting(false);
+      if (!controller.signal.aborted) setSubmitting(false);
     }
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setError(null);
 
     if (mode === 'login') {
@@ -114,9 +123,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       return;
     }
 
+    const controller = new AbortController();
+    authRequest.current?.abort(); authRequest.current = controller;
     setSubmitting(true);
     try {
       const res = await fetch('/api/auth/signup', {
+        signal: controller.signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,15 +142,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         }),
       });
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (!res.ok) {
         setError(data.error || 'Could not create account.');
         return;
       }
       onAuthSuccess(data.user as UserDocument, data.token as string);
     } catch {
-      setError('Network error while creating account.');
+      if (!controller.signal.aborted) setError('Network error while creating account.');
     } finally {
-      setSubmitting(false);
+      if (!controller.signal.aborted) setSubmitting(false);
     }
   };
 
@@ -212,7 +225,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleFormSubmit} className="space-y-5">
+            <form onSubmit={handleFormSubmit} aria-busy={submitting} className="space-y-5">
               {mode === 'signup' && (
                 <>
                   <div>
@@ -304,9 +317,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 disabled={submitting}
                 className="w-full btn-crimson rounded-full py-3.5 text-xs font-semibold uppercase tracking-wider inline-flex items-center justify-center gap-2 cursor-pointer"
               >
+                {submitting && <LoaderCircle aria-hidden="true" className="h-4 w-4 motion-safe:animate-spin" />}
                 <span>
                   {submitting
-                    ? 'Authenticating...'
+                    ? mode === 'login' ? 'Signing you in…' : 'Creating your account…'
                     : mode === 'login'
                       ? 'Sign In to Workspace'
                       : 'Create Account & Continue'}
@@ -403,7 +417,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         onClick={() => handleLogin(acct.email, acct.password)}
                         className="btn-crimson rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wider inline-flex items-center gap-1.5 cursor-pointer"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-[var(--red)]" />
+                        {submitting ? <LoaderCircle aria-hidden="true" className="w-3.5 h-3.5 text-[var(--red)] motion-safe:animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--red)]" />}
                         <span>Login as {acct.role}</span>
                       </button>
                     </div>

@@ -1,5 +1,5 @@
 export type UserRole = 'student' | 'instructor' | 'admin';
-export type AppView = 'landing' | 'workspace' | 'auth' | 'profile';
+export type AppView = 'landing' | 'workspace' | 'learning' | 'auth' | 'profile';
 
 export interface UploadAssetDocument {
   _id: string;

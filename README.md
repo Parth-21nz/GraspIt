@@ -9,7 +9,8 @@ A full-stack learning project for studying security, database consistency and cu
 ## Features
 
 - Public catalog and contact form; role-filtered course and lesson access.
-- Student enrollment, progress, lesson notes and course completion certificates.
+- **My Learning** for every account: enrollment, progress, lesson notes and course completion certificates. Instructors/admins keep separate Teaching/Admin workspaces; use `#learning` for the learner view.
+- Session-aware loaders for startup, login and enrollment, with cancellation of outdated data requests and retryable loading errors. Lesson progress and note actions show saving feedback.
 - Instructor course builder with image upload, progress/retry, preview and visible save errors.
 - Administrator course approval, user moderation and category management.
 - Editable account profile with name, email, professional title, bio and a photo; open **Profile** in the navbar or use `#profile`.
@@ -131,6 +132,8 @@ This is resumable: each course is changed only after successful storage and only
 | `npm run verify:dev` | Vite middleware, TSX/static delivery and development CSP smoke check |
 | `npm run verify:cleanup` | Populated-schema upgrade, rollback guard and retained-field verification |
 | `npm run verify:profile` | Profile permissions, email confirmation, avatar ownership and cleanup |
+| `npm run verify:analytics` | Actual enrollment counts, unique learners and scoped instructor booking totals |
+| `npm run verify:loading` | Outdated responses, logout cancellation, timeout recovery and retry races |
 | `npm test` | Run all database/API suites and the development smoke check sequentially |
 
 ```sh
