@@ -1,3 +1,4 @@
+import { sessionFromResponse, sessionHeaders } from './http-test.ts';
 /** Real PostgreSQL/API regression checks. All writes use a fresh disposable schema. */
 import 'dotenv/config';
 import assert from 'node:assert/strict';
@@ -25,6 +26,8 @@ env.DIRECT_URL = env.DATABASE_URL;
 env.PAYMENTS_MODE = 'disabled';
 env.PUBLIC_ORIGIN = 'http://localhost:3000';
 env.TRUST_PROXY = 'false';
+env.MAIL_OUTBOX_DIR = path.resolve('.data', schema, 'mail');
+env.MAIL_MODE = 'outbox';
 env.VIDEO_ORIGINS = 'https://www.youtube.com,https://youtube.com,https://youtu.be,https://www.youtube-nocookie.com,https://vimeo.com,https://player.vimeo.com,https://example.test';
 const sql = new pg.Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 10_000 });
 const db = new PrismaClient({
@@ -83,17 +86,17 @@ async function startServer(demo: boolean) {
 
 async function request(route: string, method = 'GET', body?: unknown, token?: string) {
   const res = await fetch(`${base}/api${route}`, {
-    method, headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    method, headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...sessionHeaders(token) },
     body: body !== undefined ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(60_000),
   });
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, body: await res.json(), headers: { 'set-cookie': res.headers.getSetCookie() } };
 }
 
 async function login(email: string) {
   const result = await request('/auth/login', 'POST', { email, password: 'password123' });
   assert.equal(result.status, 200);
   assert(!('password' in result.body.user));
-  return result.body.token as string;
+  return sessionFromResponse(result);
 }
 
 const counts = async () => Promise.all([
@@ -157,7 +160,7 @@ try {
   const admin = await login('admin@graspit.dev');
   const signup = await request('/auth/signup', 'POST', { name: 'Other Student', email: 'verify@example.test', password: 'password123', role: 'admin' });
   assert.equal(signup.status, 201);
-  const other = signup.body.token;
+  const other = sessionFromResponse(signup);
   await check('signup cannot create an administrator', async () => assert.equal(signup.body.user.role, 'student'));
   const videoUrls = (courses: any[]) => courses.flatMap((c) => c.modules.flatMap((m: any) => m.lessons.map((l: any) => l.videoUrl)));
   await check('anonymous bootstrap redacts videos and private records', async () => {
@@ -193,7 +196,7 @@ try {
     assert.equal((await request('/users/usr_instructor_01', 'PATCH', { role: 'admin' }, student)).status, 403);
   });
   const courseResult = await request('/courses', 'POST', {
-    title: 'Regression Course', category: 'Verification', price: 0,
+    title: 'Regression Course', category: 'Tech', price: 0,
     instructorId: 'usr_admin_01', studentsCount: 9000, rating: 1, status: 'published', featured: true,
     modules: [{ _id: 'verify_module', title: 'Module', lessons: Array.from({ length: 200 }, (_, i) => ({ _id: `verify_lesson_${i}`, title: `Lesson ${i}`, videoUrl: 'https://example.test/video.mp4' })) }],
   }, instructor);
@@ -253,7 +256,7 @@ try {
   });
   await check('oversized anonymous requests and malformed JSON return JSON errors', async () => {
     assert.equal((await request('/inquiries', 'POST', { message: 'x'.repeat(110_000) })).status, 413);
-    const res = await fetch(`${base}/api/inquiries`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{broken' });
+    const res = await fetch(`${base}/api/inquiries`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-GraspIt-Client': 'web' }, body: '{broken' });
     assert.equal(res.status, 400); assert.equal((await res.json()).error, 'Invalid JSON.');
   });
   await startServer(false);
@@ -262,8 +265,8 @@ try {
     const user = await request('/auth/signup', 'POST', { name: 'Non-demo Student', email: 'non-demo@example.test', password: 'password123' });
     assert.equal(user.status, 201);
     const paid = await db.course.findFirstOrThrow({ where: { price: { gt: 0 }, status: 'published' } });
-    assert.equal((await request('/enrollments', 'POST', { courseId: paid.id, amountPaid: 0 }, user.body.token)).status, 402);
-    assert.equal((await request('/enrollments', 'POST', { courseId: course._id }, user.body.token)).status, 201);
+    assert.equal((await request('/enrollments', 'POST', { courseId: paid.id, amountPaid: 0 }, sessionFromResponse(user))).status, 402);
+    assert.equal((await request('/enrollments', 'POST', { courseId: course._id }, sessionFromResponse(user))).status, 201);
   });
 } finally {
   await stopServer();
@@ -271,6 +274,9 @@ try {
   // The identifier is generated above, never supplied by the caller.
   await sql.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
   await sql.end();
+  const testDir = path.resolve('.data', schema);
+  assert.equal(path.dirname(testDir), path.resolve('.data'));
+  fs.rmSync(testDir, { recursive: true, force: true });
   console.log(`Verification: ${passed} passed, ${failures} failed. Temporary schema removed.`);
 }
 if (failures) process.exitCode = 1;

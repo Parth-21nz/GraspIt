@@ -1,5 +1,5 @@
 export type UserRole = 'student' | 'instructor' | 'admin';
-export type AppView = 'landing' | 'workspace' | 'learning' | 'auth' | 'profile';
+export type AppView = 'landing' | 'workspace' | 'learning' | 'auth' | 'profile' | 'forgot-password' | 'reset-password' | 'verify-email';
 
 export interface UploadAssetDocument {
   _id: string;
@@ -23,11 +23,16 @@ export interface UserDocument {
   avatarAssetId?: string | null;
   status: 'active' | 'suspended';
   joinedAt: string;
+  emailVerifiedAt?: string | null;
+  isDemoAccount?: boolean;
+  instructorApplicationStatus?: 'none' | 'pending' | 'approved' | 'rejected';
 }
 
 export interface ProfileDocument {
   user: UserDocument;
   emailChangeAllowed: boolean;
+  pendingEmail?: string | null;
+  emailDeliveryAvailable?: boolean;
 }
 
 export interface ProfileUpdate {

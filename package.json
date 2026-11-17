@@ -18,6 +18,7 @@
     "db:backup-cleanup": "tsx scripts/backup-schema-cleanup.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:admin": "tsx scripts/create-admin.ts",
+    "mail:outbox": "tsx scripts/read-outbox.ts",
     "uploads:migrate": "tsx scripts/migrate-images.ts",
     "uploads:cleanup": "tsx scripts/cleanup-uploads.ts",
     "verify:step2": "tsx scripts/verify-step2.ts",
@@ -27,7 +28,8 @@
     "verify:profile": "tsx scripts/verify-profile.ts",
     "verify:analytics": "tsx --test scripts/verify-instructor-analytics.ts",
     "verify:loading": "tsx --test scripts/verify-loading.ts",
-    "test": "npm run verify:step2 && npm run verify:foundation && npm run verify:cleanup && npm run verify:profile && npm run verify:analytics && npm run verify:loading && npm run verify:dev"
+    "verify:auth": "tsx scripts/verify-auth.ts",
+    "test": "npm run verify:step2 && npm run verify:foundation && npm run verify:cleanup && npm run verify:profile && npm run verify:auth && npm run verify:analytics && npm run verify:loading && npm run verify:dev"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

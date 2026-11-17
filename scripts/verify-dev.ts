@@ -1,6 +1,9 @@
 // Smoke-test the real Vite middleware and development CSP without seeding data.
 import 'dotenv/config';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import { prisma } from '../server/db.ts';
 import { createApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
@@ -18,7 +21,15 @@ app.use(errorHandler);
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>((resolve) => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+const probe = path.resolve('.data', `private-probe-${crypto.randomUUID()}.txt`);
 try {
+  await fs.mkdir(path.dirname(probe), { recursive: true });
+  await fs.writeFile(probe, 'Private probe; never serve this content.', { flag: 'wx' });
+  for (const route of [`/.data/${path.basename(probe)}`, `/@fs/${probe.replaceAll('\\', '/')}`]) {
+    const response = await fetch(`${base}${route}`);
+    assert.equal(response.status, 403, 'Vite must not serve the private outbox/data directory');
+    assert(!(await response.text()).includes('Private probe; never serve this content.'));
+  }
   const html = await fetch(base);
   assert.equal(html.status, 200);
   assert.equal(html.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
@@ -37,6 +48,7 @@ try {
   await image.arrayBuffer();
   console.log('PASS development frontend, Vite client, TSX transformation, static images and development CSP. No database writes.');
 } finally {
+  await fs.rm(probe, { force: true });
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await closeFrontend();
   if (previousHmr === undefined) delete process.env.DISABLE_HMR;

@@ -103,6 +103,7 @@ export async function importDatabase(
         ? pw
         : hashPassword(pw || newId('locked')),
       role: pick(u.role, ROLES, 'student'),
+      instructorApplicationStatus: u.role === 'instructor' ? 'approved' : 'none',
       title: str(u.title),
       bio: str(u.bio),
       avatar: str(u.avatar),

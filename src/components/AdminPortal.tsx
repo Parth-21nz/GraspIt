@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiRequest } from '../api/client';
 import {
   Users,
   Layers,
@@ -41,6 +42,7 @@ interface AdminPortalProps {
   onCreateCategory: (name: string, description: string) => Promise<void>;
   onDeleteCategory: (categoryId: string) => Promise<void>;
   onToggleInquiryStatus: (inquiryId: string) => Promise<void>;
+  onApplicationReviewed: (user: UserDocument) => void;
 }
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({
@@ -55,9 +57,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   onCreateCategory,
   onDeleteCategory,
   onToggleInquiryStatus,
+  onApplicationReviewed,
 }) => {
   const [newCatName, setNewCatName] = useState('');
   const [newCatDesc, setNewCatDesc] = useState('');
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const applications = users.filter(user => user.instructorApplicationStatus === 'pending' && user.role === 'student');
+  const review = async (id: string, decision: 'approved' | 'rejected') => {
+    if (reviewing) return; setReviewing(id); setReviewError(null);
+    try {
+      const res = await apiRequest(`/api/instructor-applications/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'The application could not be reviewed.');
+      onApplicationReviewed(data);
+    } catch (err) { setReviewError(err instanceof Error ? err.message : 'Please try again.'); }
+    finally { setReviewing(null); }
+  };
   const [inspectingCourse, setInspectingCourse] =
     useState<CourseDocument | null>(null);
 
@@ -240,6 +256,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           </div>
         )}
       </div>
+
+      <section aria-labelledby="teaching-applications" className="rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-6">
+        <h2 id="teaching-applications" className="text-xl font-bold">Teaching applications ({applications.length})</h2>
+        {reviewError && <p role="alert" className="mt-4 text-sm text-red-300">{reviewError}</p>}
+        {!applications.length ? <p className="mt-3 text-sm text-[var(--text-body)]">No applications awaiting review.</p> : applications.map(user => <article key={user._id} className="mt-5 flex flex-wrap items-start justify-between gap-5 border-t border-[var(--border)] pt-5">
+          <div className="min-w-0 max-w-2xl"><h3 className="font-semibold">{user.name}</h3><p className="mt-1 break-words text-sm text-[var(--text-body)]">{user.email} · {user.emailVerifiedAt ? 'Email verified' : 'Awaiting email verification'}</p><p className="mt-2 text-sm">{user.title}</p><p className="mt-2 whitespace-pre-wrap break-words text-sm text-[var(--text-body)]">{user.bio || 'No introduction provided.'}</p></div>
+          <div className="flex gap-3"><button type="button" disabled={Boolean(reviewing) || !user.emailVerifiedAt || user.status !== 'active'} onClick={() => void review(user._id, 'approved')} className="btn-crimson rounded-full px-4 py-2 text-sm disabled:opacity-50">{reviewing === user._id ? 'Saving…' : 'Approve teaching'}</button><button type="button" disabled={Boolean(reviewing)} onClick={() => void review(user._id, 'rejected')} className="btn-secondary-outline rounded-full px-4 py-2 text-sm disabled:opacity-50">Decline</button></div>
+        </article>)}
+      </section>
 
       {/* SECTION 1: COURSE CATALOG GOVERNANCE & FEATURED CURATION */}
       <div className="rounded-[26px] bg-[var(--surface)] border border-[var(--border)] overflow-hidden">
@@ -427,7 +452,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                       className="bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs uppercase tracking-wider font-semibold text-[var(--text-primary)] focus:border-[var(--red)] focus:outline-none"
                     >
                       <option value="student">Student</option>
-                      <option value="instructor">Instructor</option>
+                      <option value="instructor" disabled={!u.emailVerifiedAt && !u.isDemoAccount && u.role !== 'instructor'}>Instructor</option>
                       <option value="admin">Admin</option>
                     </select>
                   </td>

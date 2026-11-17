@@ -93,7 +93,7 @@ export function ProfilePage({ currentUser, onLoad, onSave, onUploadAvatar, onBac
     if (avatar !== profile.user.avatar || avatarAssetId !== (profile.user.avatarAssetId ?? null)) input.avatarAssetId = avatarAssetId;
     try {
       const updated = await onSave(input);
-      if (mounted.current) { fill(updated); setNotice('Your profile has been updated.'); }
+      if (mounted.current) { fill(updated); setNotice(updated.pendingEmail ? 'Profile saved. Confirm the verification link sent to your new email before the address changes.' : 'Your profile has been updated.'); }
     } catch (err) { if (mounted.current) setError(err instanceof Error ? err.message : 'Your changes could not be saved. Please retry.'); }
     finally { if (mounted.current) setSaving(false); }
   };
@@ -145,7 +145,8 @@ export function ProfilePage({ currentUser, onLoad, onSave, onUploadAvatar, onBac
           <h2 className="mb-5 flex items-center gap-2 text-lg font-semibold text-[var(--text-primary)]"><LockKeyhole className="h-5 w-5 text-[var(--red)]" />Sign-in details</h2>
           <label htmlFor="profile-email" className="mb-2 block text-sm font-medium text-[var(--text-primary)]">Email address <span className="text-[var(--red)]">*</span></label>
           <input id="profile-email" name="email" type="email" autoComplete="email" required maxLength={200} readOnly={!profile.emailChangeAllowed} value={email} onChange={(e) => { setNotice(null); setEmail(e.target.value); }} aria-describedby="profile-email-hint" className={inputClass} />
-          <p id="profile-email-hint" className="mt-2 text-xs text-[var(--text-body)]">{profile.emailChangeAllowed ? 'Changing your sign-in email requires your current password.' : 'The shared demo email stays fixed. Personal accounts can change their sign-in email.'}</p>
+          <p id="profile-email-hint" className="mt-2 text-xs text-[var(--text-body)]">{profile.emailChangeAllowed ? 'A change requires your current password and verification of the new address. Your current email stays active until confirmation.' : 'The shared demo email stays fixed. Personal accounts can change their sign-in email.'}</p>
+          {profile.pendingEmail && <p role="status" className="mt-3 text-sm text-[var(--text-body)]">Awaiting confirmation: {profile.pendingEmail}. Email messages are stored in the local mail outbox for this demo.</p>}
           {emailChanged && profile.emailChangeAllowed && <div className="mt-5"><label htmlFor="profile-password" className="mb-2 block text-sm font-medium text-[var(--text-primary)]">Current password <span className="text-[var(--red)]">*</span></label><input id="profile-password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} /></div>}
         </fieldset>
         <div className="flex flex-wrap items-center justify-end gap-3 border-t border-[var(--border)] pt-6">

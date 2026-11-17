@@ -49,7 +49,7 @@ async function main() {
     const stored = users.find((row) => row.id === u._id);
     assert(stored, `Missing user ${u._id}`);
     const { password, ...expected } = u;
-    compareRecord(toUserDoc(stored), { ...expected, avatarAssetId: expected.avatarAssetId ?? null, email: expected.email.trim().toLowerCase(), joinedAt: iso(expected.joinedAt) });
+    compareRecord(toUserDoc(stored), { ...expected, emailVerifiedAt: expected.emailVerifiedAt ?? null, isDemoAccount: ['usr_student_01', 'usr_instructor_01', 'usr_instructor_02', 'usr_admin_01'].includes(u._id), instructorApplicationStatus: expected.instructorApplicationStatus ?? (u.role === 'instructor' ? 'approved' : 'none'), avatarAssetId: expected.avatarAssetId ?? null, email: expected.email.trim().toLowerCase(), joinedAt: iso(expected.joinedAt) });
     if (password?.startsWith('scrypt$')) assert.equal(stored.password, password);
     else if (password) assert(verifyPassword(password, stored.password), `Password mismatch for ${u._id}`);
   }

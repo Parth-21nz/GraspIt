@@ -18,6 +18,7 @@ import type {
   MentorProfile,
   UserDocument,
 } from '../src/types.ts';
+import { SEED_USER_IDS } from './seed.ts';
 
 export const courseInclude = {
   instructor: { select: { name: true, title: true } },
@@ -41,6 +42,9 @@ export function toUserDoc(u: User): UserDocument {
     avatarAssetId: u.avatarAssetId,
     status: u.status,
     joinedAt: u.joinedAt.toISOString(),
+    emailVerifiedAt: u.emailVerifiedAt?.toISOString() ?? null,
+    isDemoAccount: SEED_USER_IDS.includes(u.id),
+    instructorApplicationStatus: u.instructorApplicationStatus,
   };
 }
 

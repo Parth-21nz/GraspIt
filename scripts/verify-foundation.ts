@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import sharp from 'sharp';
-import request from 'supertest';
+import { testRequest as request, sessionFromResponse, sessionHeaders } from './http-test.ts';
 import { v2 as cloudinary } from 'cloudinary';
 import { createApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
@@ -29,10 +29,10 @@ const demoApp = createApp({ prisma: db, config: { ...config, demoMode: true }, s
 const login = async (target: typeof app, email: string) => {
   const res = await request(target).post('/api/auth/login').send({ email, password: 'password123' });
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  return res.body.token as string;
+  return sessionFromResponse(res);
 };
 const image = await sharp({ create: { width: 64, height: 40, channels: 3, background: '#c22339' } }).png().toBuffer();
-const courseInput = { title: 'Foundation upload test', category: 'Verification', price: 99, modules: [] };
+const courseInput = { title: 'Foundation upload test', category: 'Tech', price: 99, modules: [] };
 
 try {
   await check('configuration rejects weak secrets, missing database, unsafe proxy and incomplete Cloudinary', () => {
@@ -84,17 +84,17 @@ try {
   });
   await check('malformed course numbers, arrays, image schemes and video providers return 400', async () => {
     for (const input of [{ price: 2_147_483_648 }, { price: '99' }, { modules: {} }, { modules: [null] }, { durationHours: -1 }, { thumbnail: 'javascript:alert(1)' }, { thumbnail: `data:image/png;base64,${image.toString('base64')}` }, { thumbnail: 'https://evil.example/image.jpg' }, { modules: [{ title: 'Module', lessons: [{ title: 'Lesson', videoUrl: 'https://evil.example/video.mp4' }] }] }]) {
-      const res = await request(demoApp).post('/api/courses').auth(instructor, { type: 'bearer' }).send({ ...courseInput, ...input });
+      const res = await request(demoApp).post('/api/courses').set(sessionHeaders(instructor)).send({ ...courseInput, ...input });
       assert.equal(res.status, 400, JSON.stringify(input));
     }
   });
   await check('category, note, progress, user and inquiry inputs reject incorrect types', async () => {
     const cases: [string, string, unknown][] = [['post', '/api/categories', { name: 123 }], ['post', '/api/notes', { content: [], lessonId: 2 }], ['patch', '/api/enrollments/missing/progress', { lessonId: {} }], ['patch', '/api/users/usr_student_01', { status: [] }], ['post', '/api/inquiries', { name: 'Tester', email: 'invalid', message: true }]];
     for (const [method, url, body] of cases) {
-      const res = await (request(demoApp) as any)[method](url).auth(admin, { type: 'bearer' }).send(body);
+      const res = await (request(demoApp) as any)[method](url).set(sessionHeaders(admin)).send(body);
       assert.equal(res.status, 400, url);
     }
-    assert.equal((await request(demoApp).put('/api/courses/bad%20id').auth(admin, { type: 'bearer' }).send({})).status, 400);
+    assert.equal((await request(demoApp).put('/api/courses/bad%20id').set(sessionHeaders(admin)).send({})).status, 400);
   });
   await check('origin checks reject foreign writes and accept the configured origin', async () => {
     const body = { name: 'Tester', email: 'hello@example.test', message: 'Hello' };
@@ -111,36 +111,36 @@ try {
     assert(csp.includes("object-src 'none'")); assert(!csp.includes('upgrade-insecure-requests'));
   });
   await check('all course JSON requests now use the 100 KB limit', async () => {
-    const res = await request(demoApp).post('/api/courses').auth(instructor, { type: 'bearer' }).send({ ...courseInput, thumbnail: 'x'.repeat(110_000) });
+    const res = await request(demoApp).post('/api/courses').set(sessionHeaders(instructor)).send({ ...courseInput, thumbnail: 'x'.repeat(110_000) });
     assert.equal(res.status, 413);
   });
   await check('uploads reject anonymous users and students before accepting images', async () => {
     assert.equal((await request(demoApp).post('/api/uploads').attach('file', image, { filename: 'cover.png', contentType: 'image/png' })).status, 401);
-    assert.equal((await request(demoApp).post('/api/uploads').auth(student, { type: 'bearer' }).attach('file', image, { filename: 'cover.png', contentType: 'image/png' })).status, 403);
+    assert.equal((await request(demoApp).post('/api/uploads').set(sessionHeaders(student)).attach('file', image, { filename: 'cover.png', contentType: 'image/png' })).status, 403);
   });
   await check('SVG, fake image bytes, malformed forms and multiple files are rejected', async () => {
     const a = createApp({ prisma: db, config: { ...config, demoMode: true }, storage });
     for (const bytes of [Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>'), Buffer.from('<html>not an image</html>')]) {
-      assert.equal((await request(a).post('/api/uploads').auth(instructor, { type: 'bearer' }).attach('file', bytes, { filename: 'cover.png', contentType: 'image/png' })).status, 415);
+      assert.equal((await request(a).post('/api/uploads').set(sessionHeaders(instructor)).attach('file', bytes, { filename: 'cover.png', contentType: 'image/png' })).status, 415);
     }
-    assert.equal((await request(a).post('/api/uploads').auth(instructor, { type: 'bearer' }).send({ file: 'x' })).status, 415);
-    assert.equal((await request(a).post('/api/uploads').auth(instructor, { type: 'bearer' }).attach('file', image, 'one.png').attach('file', image, 'two.png')).status, 400);
+    assert.equal((await request(a).post('/api/uploads').set(sessionHeaders(instructor)).send({ file: 'x' })).status, 415);
+    assert.equal((await request(a).post('/api/uploads').set(sessionHeaders(instructor)).attach('file', image, 'one.png').attach('file', image, 'two.png')).status, 400);
   });
   await check('known-length and streaming uploads stop at 5 MB', async () => {
     const a = createApp({ prisma: db, config: { ...config, demoMode: true }, storage });
     const bytes = Buffer.alloc(MAX_IMAGE_BYTES + 1);
-    assert.equal((await request(a).post('/api/uploads').auth(instructor, { type: 'bearer' }).attach('file', bytes, { filename: 'big.png', contentType: 'image/png' })).status, 413);
+    assert.equal((await request(a).post('/api/uploads').set(sessionHeaders(instructor)).attach('file', bytes, { filename: 'big.png', contentType: 'image/png' })).status, 413);
     const stream = Readable.from(Array.from({ length: 81 }, () => Buffer.alloc(64 * 1024)));
-    assert.equal((await request(a).post('/api/uploads').auth(instructor, { type: 'bearer' }).attach('file', stream as any, { filename: 'big.png', contentType: 'image/png' })).status, 413);
+    assert.equal((await request(a).post('/api/uploads').set(sessionHeaders(instructor)).attach('file', stream as any, { filename: 'big.png', contentType: 'image/png' })).status, 413);
   });
   await check('oversized dimensions and decompression-heavy images are rejected', async () => {
     const a = createApp({ prisma: db, config: { ...config, demoMode: true }, storage });
     for (const [width, height] of [[8193, 1], [5000, 4001]]) {
       const bytes = await sharp({ create: { width, height, channels: 3, background: '#000' } }).png().toBuffer();
-      assert.equal((await request(a).post('/api/uploads').auth(instructor, { type: 'bearer' }).attach('file', bytes, { filename: 'large.png', contentType: 'image/png' })).status, 415);
+      assert.equal((await request(a).post('/api/uploads').set(sessionHeaders(instructor)).attach('file', bytes, { filename: 'large.png', contentType: 'image/png' })).status, 415);
     }
   });
-  const upload = await request(demoApp).post('/api/uploads').auth(instructor, { type: 'bearer' }).attach('file', image, { filename: '../../cover.png', contentType: 'image/png' });
+  const upload = await request(demoApp).post('/api/uploads').set(sessionHeaders(instructor)).attach('file', image, { filename: '../../cover.png', contentType: 'image/png' });
   assert.equal(upload.status, 201, JSON.stringify(upload.body));
   const asset = upload.body;
   await check('valid images are decoded, re-encoded, recorded and served with safe names', async () => {
@@ -154,29 +154,29 @@ try {
   });
   let attachedCourse: string;
   await check('course owner can attach an uploaded asset', async () => {
-    const res = await request(demoApp).post('/api/courses').auth(instructor, { type: 'bearer' }).send({ ...courseInput, thumbnailAssetId: asset._id, thumbnail: asset.url });
+    const res = await request(demoApp).post('/api/courses').set(sessionHeaders(instructor)).send({ ...courseInput, thumbnailAssetId: asset._id, thumbnail: asset.url });
     assert.equal(res.status, 201, JSON.stringify(res.body));
     assert.equal(res.body.course.thumbnailAssetId, asset._id); assert.equal(res.body.course.thumbnail, asset.url);
     attachedCourse = res.body.course._id;
   });
   await check('another instructor cannot attach an asset or bypass ownership with its URL', async () => {
-    assert.equal((await request(demoApp).post('/api/courses').auth(other, { type: 'bearer' }).send({ ...courseInput, thumbnailAssetId: asset._id })).status, 403);
-    assert.equal((await request(demoApp).post('/api/courses').auth(other, { type: 'bearer' }).send({ ...courseInput, thumbnail: asset.url })).status, 400);
-    assert.equal((await request(demoApp).post('/api/courses').auth(instructor, { type: 'bearer' }).send({ ...courseInput, thumbnailAssetId: asset._id, thumbnail: '/images/other.jpg' })).status, 400);
+    assert.equal((await request(demoApp).post('/api/courses').set(sessionHeaders(other)).send({ ...courseInput, thumbnailAssetId: asset._id })).status, 403);
+    assert.equal((await request(demoApp).post('/api/courses').set(sessionHeaders(other)).send({ ...courseInput, thumbnail: asset.url })).status, 400);
+    assert.equal((await request(demoApp).post('/api/courses').set(sessionHeaders(instructor)).send({ ...courseInput, thumbnailAssetId: asset._id, thumbnail: '/images/other.jpg' })).status, 400);
   });
   await check('administrator may attach assets and existing static fixture paths still work', async () => {
-    assert.equal((await request(demoApp).post('/api/courses').auth(admin, { type: 'bearer' }).send({ ...courseInput, thumbnailAssetId: asset._id })).status, 201);
-    assert.equal((await request(demoApp).put(`/api/courses/${attachedCourse}`).auth(instructor, { type: 'bearer' }).send({ title: 'Keep uploaded cover' })).body.thumbnailAssetId, asset._id);
-    assert.equal((await request(demoApp).post('/api/courses').auth(instructor, { type: 'bearer' }).send({ ...courseInput, thumbnail: '/images/course_ai_systems_1794504816295.jpg' })).status, 201);
-    const assigned = await request(demoApp).post('/api/courses').auth(admin, { type: 'bearer' }).send({ ...courseInput, instructorId: 'foundation_instructor', thumbnailAssetId: asset._id });
+    assert.equal((await request(demoApp).post('/api/courses').set(sessionHeaders(admin)).send({ ...courseInput, thumbnailAssetId: asset._id })).status, 201);
+    assert.equal((await request(demoApp).put(`/api/courses/${attachedCourse}`).set(sessionHeaders(instructor)).send({ title: 'Keep uploaded cover' })).body.thumbnailAssetId, asset._id);
+    assert.equal((await request(demoApp).post('/api/courses').set(sessionHeaders(instructor)).send({ ...courseInput, thumbnail: '/images/course_ai_systems_1794504816295.jpg' })).status, 201);
+    const assigned = await request(demoApp).post('/api/courses').set(sessionHeaders(admin)).send({ ...courseInput, instructorId: 'foundation_instructor', thumbnailAssetId: asset._id });
     assert.equal(assigned.status, 201);
-    const retained = await request(demoApp).put(`/api/courses/${assigned.body.course._id}`).auth(other, { type: 'bearer' }).send({ title: 'Retain assigned cover', thumbnailAssetId: asset._id, thumbnail: asset.url });
+    const retained = await request(demoApp).put(`/api/courses/${assigned.body.course._id}`).set(sessionHeaders(other)).send({ title: 'Retain assigned cover', thumbnailAssetId: asset._id, thumbnail: asset.url });
     assert.equal(retained.status, 200); assert.equal(retained.body.thumbnailAssetId, asset._id);
   });
   await check('storage failures return retryable errors without creating assets', async () => {
     const count = await db.uploadAsset.count();
     const unavailable = createApp({ prisma: db, config: { ...config, demoMode: true }, storage: { ...storage, async save() { throw new Error('provider-secret-should-not-leak'); } } });
-    const res = await request(unavailable).post('/api/uploads').auth(instructor, { type: 'bearer' }).attach('file', image, 'cover.png');
+    const res = await request(unavailable).post('/api/uploads').set(sessionHeaders(instructor)).attach('file', image, 'cover.png');
     assert.equal(res.status, 503); assert(!JSON.stringify(res.body).includes('provider-secret'));
     assert.equal(await db.uploadAsset.count(), count);
   });
@@ -200,7 +200,7 @@ try {
     const broken = { ...storage, async delete() { throw new Error('Temporary outage'); } };
     assert.equal((await cleanupUploads(db, schema, broken)).failed, 1);
     assert.equal((await db.uploadAsset.findUniqueOrThrow({ where: { id: orphan._id } })).state, 'deleting');
-    assert.equal((await request(demoApp).post('/api/courses').auth(instructor, { type: 'bearer' }).send({ ...courseInput, thumbnailAssetId: orphan._id })).status, 409);
+    assert.equal((await request(demoApp).post('/api/courses').set(sessionHeaders(instructor)).send({ ...courseInput, thumbnailAssetId: orphan._id })).status, 409);
     assert.equal((await cleanupUploads(db, schema, storage)).removed, 1);
   });
   await check('legacy data URI migration is resumable and failed covers remain unchanged', async () => {
@@ -215,14 +215,14 @@ try {
   });
   await check('demo accounts never implicitly enable paid enrollment', async () => {
     const paid = await db.course.findFirstOrThrow({ where: { price: { gt: 0 }, status: 'published', enrollments: { none: { userId: 'foundation_instructor' } } } });
-    assert.equal((await request(demoApp).post('/api/enrollments').auth(other, { type: 'bearer' }).send({ courseId: paid.id })).status, 402);
+    assert.equal((await request(demoApp).post('/api/enrollments').set(sessionHeaders(other)).send({ courseId: paid.id })).status, 402);
   });
   await check('mock payments work without demo accounts and are explicitly marked', async () => {
     const mockApp = createApp({ prisma: db, config: { ...config, paymentsMode: 'mock' }, storage });
     const signed = await request(mockApp).post('/api/auth/signup').send({ name: 'Mock learner', email: 'mock@example.test', password: 'password123', role: 'admin' });
     assert.equal(signed.body.user.role, 'student');
     const paid = await db.course.findFirstOrThrow({ where: { price: { gt: 0 }, status: 'published' } });
-    const res = await request(mockApp).post('/api/enrollments').auth(signed.body.token, { type: 'bearer' }).send({ courseId: paid.id, amountPaid: 0 });
+    const res = await request(mockApp).post('/api/enrollments').set(sessionHeaders(sessionFromResponse(signed))).send({ courseId: paid.id, amountPaid: 0 });
     assert.equal(res.status, 201); assert.equal(res.body.amountPaid, paid.price); assert.equal(res.body.paymentMode, 'mock'); assert.match(res.body.paymentRef, /^MOCK-/);
     const bootstrap = await request(mockApp).get('/api/bootstrap');
     assert.equal(bootstrap.body.demoMode, false); assert.equal(bootstrap.body.paymentsMode, 'mock');
@@ -237,18 +237,18 @@ try {
   let firstLearnerEnrollment = '';
   for (const actor of [{ role: 'student', id: 'usr_student_01', token: student }, { role: 'instructor', id: 'usr_instructor_01', token: instructor }, { role: 'admin', id: 'usr_admin_01', token: admin }]) {
     await check(`${actor.role} can learn, save notes and earn a certificate without changing role`, async () => {
-      const enrolled = await request(demoApp).post('/api/enrollments').auth(actor.token, { type: 'bearer' }).send({ courseId: learningCourse.id });
+      const enrolled = await request(demoApp).post('/api/enrollments').set(sessionHeaders(actor.token)).send({ courseId: learningCourse.id });
       assert.equal(enrolled.status, 201); assert.equal(enrolled.body.userId, actor.id);
-      const boot = await request(demoApp).get('/api/bootstrap').auth(actor.token, { type: 'bearer' });
+      const boot = await request(demoApp).get('/api/bootstrap').set(sessionHeaders(actor.token));
       assert.equal(boot.body.me.role, actor.role);
       assert(boot.body.enrollments.some((e: any) => e._id === enrolled.body._id && e.userId === actor.id));
       assert(boot.body.courses.find((c: any) => c._id === learningCourse.id).modules[0].lessons[0].videoUrl);
       assert(boot.body.notes.every((note: any) => note.userId === actor.id));
-      const completed = await request(demoApp).patch(`/api/enrollments/${enrolled.body._id}/progress`).auth(actor.token, { type: 'bearer' }).send({ lessonId: 'all_role_lesson' });
+      const completed = await request(demoApp).patch(`/api/enrollments/${enrolled.body._id}/progress`).set(sessionHeaders(actor.token)).send({ lessonId: 'all_role_lesson' });
       assert.equal(completed.status, 200); assert.equal(completed.body.progressPercent, 100); assert(completed.body.certificateIssuedAt);
-      const note = await request(demoApp).post('/api/notes').auth(actor.token, { type: 'bearer' }).send({ courseId: learningCourse.id, lessonId: 'all_role_lesson', lessonTitle: 'Lesson', content: 'Personal learning notes', timestampFormatted: '00:00' });
+      const note = await request(demoApp).post('/api/notes').set(sessionHeaders(actor.token)).send({ courseId: learningCourse.id, lessonId: 'all_role_lesson', lessonTitle: 'Lesson', content: 'Personal learning notes', timestampFormatted: '00:00' });
       assert.equal(note.status, 201); assert.equal(note.body.userId, actor.id);
-      if (firstLearnerEnrollment) assert.equal((await request(demoApp).patch(`/api/enrollments/${firstLearnerEnrollment}/progress`).auth(actor.token, { type: 'bearer' }).send({ lessonId: 'all_role_lesson' })).status, 404);
+      if (firstLearnerEnrollment) assert.equal((await request(demoApp).patch(`/api/enrollments/${firstLearnerEnrollment}/progress`).set(sessionHeaders(actor.token)).send({ lessonId: 'all_role_lesson' })).status, 404);
       else firstLearnerEnrollment = enrolled.body._id;
     });
   }

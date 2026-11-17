@@ -1,12 +1,15 @@
 import type { UploadAssetDocument } from '../types';
+import { getCsrfToken } from './client';
 
-export function uploadImage(file: File, token: string, onProgress: (percent: number) => void, signal: AbortSignal, endpoint: '/api/uploads' | '/api/profile/avatar' = '/api/uploads'): Promise<UploadAssetDocument> {
+export function uploadImage(file: File, onProgress: (percent: number) => void, signal: AbortSignal, endpoint: '/api/uploads' | '/api/profile/avatar' = '/api/uploads'): Promise<UploadAssetDocument> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const abort = () => xhr.abort();
     if (signal.aborted) { reject(new Error('Upload cancelled.')); return; }
     xhr.open('POST', endpoint);
-    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('X-GraspIt-Client', 'web');
+    if (getCsrfToken()) xhr.setRequestHeader('X-CSRF-Token', getCsrfToken()!);
     xhr.timeout = 60_000;
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(Math.min(99, Math.round(event.loaded / event.total * 100))); };
     xhr.onload = () => {

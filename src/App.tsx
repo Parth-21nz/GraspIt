@@ -16,6 +16,9 @@ import { ProfilePage } from './components/ProfilePage';
 import { uploadImage } from './api/uploads';
 import { createRequestGate } from './lib/latestRequest';
 import { LoadingScreen, LoadErrorScreen } from './components/LoadingScreen';
+import { apiRequest, setCsrfToken } from './api/client';
+import { AccountRecoveryPage } from './components/AccountRecoveryPage';
+import { AccountSecurity } from './components/AccountSecurity';
 import type {
   CategoryDocument,
   CourseDocument,
@@ -39,17 +42,9 @@ async function responseError(res: Response, fallback: string) {
   return issue ? `${issue.path}: ${issue.message}` : body?.error || fallback;
 }
 
-function readStorage(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
 function viewFromHash(): AppView {
-  const view = window.location.hash.slice(1);
-  return view === 'profile' || view === 'workspace' || view === 'learning' || view === 'auth' ? view : 'landing';
+  const view = window.location.hash.slice(1).split('?')[0];
+  return ['profile', 'workspace', 'learning', 'auth', 'forgot-password', 'reset-password', 'verify-email'].includes(view) ? view as AppView : 'landing';
 }
 
 export default function App() {
@@ -66,25 +61,27 @@ export default function App() {
   const [bootstrapRequests] = useState(createRequestGate);
 
   // Authenticated User & Active View State (No Role Switcher)
-  const [currentUserId, setCurrentUserId] = useState<string | null>(() =>
-    readStorage(AUTH_STORAGE_KEY)
-  );
-  const [token, setToken] = useState<string | null>(() =>
-    readStorage(TOKEN_STORAGE_KEY)
-  );
-  const sessionToken = useRef(token);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [sessionVersion, setSessionVersion] = useState(0);
+  const sessionGeneration = useRef(0);
+  const expectsSession = useRef(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  useEffect(() => { try { localStorage.removeItem(AUTH_STORAGE_KEY); localStorage.removeItem(TOKEN_STORAGE_KEY); } catch {} }, []);
   const [demoMode, setDemoMode] = useState<boolean>(false);
+  const [emailDeliveryAvailable, setEmailDeliveryAvailable] = useState(false);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [paymentsMode, setPaymentsMode] = useState<'disabled' | 'mock'>('disabled');
   const profileDirty = useRef(false);
   const setProfileDirty = useCallback((dirty: boolean) => { profileDirty.current = dirty; }, []);
 
   const clearSession = () => {
     bootstrapRequests.cancel();
-    sessionToken.current = null;
+    expectsSession.current = false;
+    setCsrfToken(null); setSessionError(null);
     setLoading(true);
     setBootstrapError(false);
     setLoadingMessage('Returning to sign in…');
-    setToken(null);
+    setSessionVersion(++sessionGeneration.current);
     setCurrentUserId(null);
     setUsers([]); setCourses([]); setEnrollments([]); setNotes([]); setInquiries([]);
     setSelectedPlayerCourseId(null); setCheckoutCourse(null);
@@ -100,12 +97,10 @@ export default function App() {
   };
 
   const apiFetch = (input: string, init: RequestInit = {}) => {
-    const requestToken = token;
-    const headers = new Headers(init.headers);
-    if (requestToken) headers.set('Authorization', `Bearer ${requestToken}`);
-    return fetch(input, { ...init, headers }).then((res) => {
-      if (requestToken !== sessionToken.current) throw new DOMException('Session changed.', 'AbortError');
-      if (res.status === 401 && requestToken) clearSession();
+    const requestVersion = sessionGeneration.current;
+    return apiRequest(input, init).then((res) => {
+      if (requestVersion !== sessionGeneration.current) throw new DOMException('Session changed.', 'AbortError');
+      if (res.status === 401) clearSession();
       return res;
     });
   };
@@ -139,25 +134,26 @@ export default function App() {
   const [pendingCourseAfterAuth, setPendingCourseAfterAuth] =
     useState<CourseDocument | null>(null);
 
-  const loadBootstrap = async (requestToken = sessionToken.current, message = requestToken ? 'Loading your workspace…' : 'Loading GraspIt…') => {
+  const loadBootstrap = async (requestVersion = sessionGeneration.current, message = expectsSession.current ? 'Loading your workspace…' : 'Loading GraspIt…') => {
     const request = bootstrapRequests.start();
-    const isCurrent = () => request.isCurrent() && requestToken === sessionToken.current;
+    const isCurrent = () => request.isCurrent() && requestVersion === sessionGeneration.current;
     const timeout = window.setTimeout(() => request.abort(), 20_000);
     setLoading(true); setLoadingMessage(message); setBootstrapError(false);
     try {
-      // Pass this session's token explicitly; a stale render must never send
-      // an anonymous request after a successful login.
-      const res = await fetch('/api/bootstrap', { signal: request.signal, cache: 'no-store', headers: requestToken ? { Authorization: `Bearer ${requestToken}` } : {} });
+      const res = await apiRequest('/api/bootstrap', { signal: request.signal, cache: 'no-store' });
       if (!isCurrent()) return false;
-      if (res.status === 401 && requestToken) { clearSession(); return false; }
+      if (res.status === 401) { clearSession(); return false; }
       if (!res.ok) throw new Error('Failed to load initial data');
       const data = await res.json();
       if (!isCurrent()) return false;
-      if (requestToken && !data.me) {
+      if (expectsSession.current && !data.me) {
         clearSession();
         return false;
       }
+      setCsrfToken(data.csrfToken ?? null);
+      expectsSession.current = Boolean(data.me);
       setDemoMode(Boolean(data.demoMode));
+      setEmailDeliveryAvailable(Boolean(data.emailDeliveryAvailable));
       setPaymentsMode(data.paymentsMode === 'mock' ? 'mock' : 'disabled');
       setCurrentUserId(data.me?._id ?? null);
       setUsers(data.users || []);
@@ -179,32 +175,28 @@ export default function App() {
   };
 
   useEffect(() => {
-    void loadBootstrap(token);
+    void loadBootstrap(sessionGeneration.current);
     return () => bootstrapRequests.cancel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [sessionVersion]);
 
   const currentUser: UserDocument | null = currentUserId
     ? users.find((u) => u._id === currentUserId) || null
     : null;
 
   const handleAuthSuccess = (
-    authenticatedUser: UserDocument,
-    authToken: string
+    authenticatedUser: UserDocument
   ) => {
     bootstrapRequests.cancel();
-    sessionToken.current = authToken;
+    expectsSession.current = true;
+    setAuthNotice(null);
+    setSessionError(null);
     setLoading(true); setLoadingMessage('Loading your workspace…'); setBootstrapError(false);
-    setToken(authToken);
+    setSessionVersion(++sessionGeneration.current);
     setUsers([authenticatedUser]);
     setCourses([]); setEnrollments([]); setNotes([]); setInquiries([]);
     setCurrentUserId(authenticatedUser._id);
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, authenticatedUser._id);
-      localStorage.setItem(TOKEN_STORAGE_KEY, authToken);
-    } catch {
-      // ignore storage errors
-    }
+
 
     if (pendingCourseAfterAuth) {
       setCheckoutCourse(pendingCourseAfterAuth);
@@ -216,13 +208,31 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
+  const performLogout = async (all: boolean) => {
     if (profileDirty.current && !window.confirm('Leave without saving your profile changes?')) return;
-    profileDirty.current = false;
-    clearSession();
-    setCheckoutCourse(null);
-    setActiveView('auth');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const version = sessionGeneration.current;
+    setLoading(true); setLoadingMessage(all ? 'Signing out everywhere…' : 'Signing out…');
+    try {
+      const res = await apiFetch(all ? '/api/auth/logout-all' : '/api/auth/logout', { method: 'POST' });
+      if (!res.ok) throw new Error('We could not sign you out. Please try again.');
+      clearSession();
+    } catch (err) {
+      if (version !== sessionGeneration.current) return;
+      setSessionError(err instanceof Error ? err.message : 'We could not sign you out. Please try again.');
+      setLoading(false);
+    }
+  };
+  const handleLogout = () => { void performLogout(false); };
+  const handleRecoveryDone = async (signIn: boolean) => {
+    if (activeView === 'forgot-password') {
+      setAuthNotice('If the account is eligible, a reset message is ready in the local mail outbox.');
+      setActiveView('auth');
+    } else if (signIn) {
+      clearSession(); setAuthNotice('Account updated. Please sign in again.');
+    } else {
+      setActiveView('profile');
+      await loadBootstrap();
+    }
   };
 
   // ─── API HANDLERS ───────────────────────────────────────────────────────
@@ -260,7 +270,7 @@ export default function App() {
       setCheckoutCourse(null);
       setSelectedPlayerCourseId(courseId);
       setActiveView('learning');
-      await loadBootstrap(token, 'Opening your course…');
+      await loadBootstrap(sessionGeneration.current, 'Opening your course…');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return null;
     }
@@ -434,7 +444,7 @@ export default function App() {
   };
 
   if (loading) return <LoadingScreen message={loadingMessage} />;
-  if (bootstrapError) return <LoadErrorScreen onRetry={() => void loadBootstrap()} onSignOut={token ? clearSession : undefined} />;
+  if (bootstrapError) return <LoadErrorScreen onRetry={() => void loadBootstrap()} onSignOut={currentUser ? handleLogout : undefined} />;
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text-primary)] relative">
@@ -449,19 +459,21 @@ export default function App() {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
       />
+      {sessionError && <p role="alert" className="mx-auto mt-28 max-w-2xl rounded-xl border border-[var(--red)] bg-[var(--surface)] p-4 text-sm">{sessionError}</p>}
 
       {/* 2. Main View Switch: Auth Page vs. Landing Page vs. Role Workspace */}
-      {activeView === 'auth' || ((activeView === 'profile' || activeView === 'learning') && !currentUser) ? (
+      {activeView === 'forgot-password' || activeView === 'reset-password' || activeView === 'verify-email' ? <AccountRecoveryPage key={activeView} mode={activeView} deliveryAvailable={emailDeliveryAvailable} onDone={handleRecoveryDone} /> : activeView === 'auth' || ((activeView === 'profile' || activeView === 'learning') && !currentUser) ? (
         <AuthPage
           showDemoAccounts={demoMode}
+          notice={authNotice}
           onAuthSuccess={handleAuthSuccess}
           onBackToLanding={() => setActiveView('landing')}
         />
       ) : activeView === 'profile' && currentUser ? (
-        <ProfilePage currentUser={currentUser} onLoad={handleLoadProfile} onSave={handleSaveProfile} onDirtyChange={setProfileDirty} onBack={() => setActiveView('workspace')} onUploadAvatar={(file, progress, signal) => {
-          if (!token) return Promise.reject(new Error('Please sign in before uploading.'));
-          return uploadImage(file, token, progress, signal, '/api/profile/avatar');
-        }} />
+        <><ProfilePage currentUser={currentUser} onLoad={handleLoadProfile} onSave={handleSaveProfile} onDirtyChange={setProfileDirty} onBack={() => setActiveView('workspace')} onUploadAvatar={(file, progress, signal) => {
+          if (!currentUser) return Promise.reject(new Error('Please sign in before uploading.'));
+          return uploadImage(file, progress, signal, '/api/profile/avatar');
+        }} /><AccountSecurity user={currentUser} deliveryAvailable={emailDeliveryAvailable} onSignedOut={() => { clearSession(); setAuthNotice('Password changed. Sign in with your new password.'); }} onLogoutAll={() => performLogout(true)} onUpdated={(user) => setUsers(previous => previous.map(row => row._id === user._id ? user : row))} /></>
       ) : activeView === 'landing' || !currentUser ? (
         <LandingPage
           categories={categories}
@@ -569,10 +581,9 @@ export default function App() {
               onCreateCourse={handleCreateCourse}
               onUpdateCourse={handleUpdateCourse}
               onDeleteCourse={handleDeleteCourse}
-              onCreateCategory={handleCreateCategory}
               onUploadCover={(file, progress, signal) => {
-                if (!token) return Promise.reject(new Error('Please sign in before uploading.'));
-                return uploadImage(file, token, progress, signal);
+                if (!currentUser) return Promise.reject(new Error('Please sign in before uploading.'));
+                return uploadImage(file, progress, signal);
               }}
             />
           )}
@@ -591,6 +602,7 @@ export default function App() {
               onCreateCategory={handleCreateCategory}
               onDeleteCategory={handleDeleteCategory}
               onToggleInquiryStatus={handleToggleInquiryStatus}
+              onApplicationReviewed={(user) => setUsers(previous => previous.map(row => row._id === user._id ? user : row))}
             />
           )}
         </div>

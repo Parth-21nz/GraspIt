@@ -14,13 +14,14 @@ A full-stack learning project for studying security, database consistency and cu
 - Instructor course builder with image upload, progress/retry, preview and visible save errors.
 - Administrator course approval, user moderation and category management.
 - Editable account profile with name, email, professional title, bio and a photo; open **Profile** in the navbar or use `#profile`.
+- Revocable cookie sessions, sign-out everywhere, password changes/recovery, email verification and admin-approved teaching applications. Run `npm run mail:outbox` to read local demo email.
 - Explicit demo seeding, independent mock-payment configuration, and a local administrator command.
 - Validated API inputs, security headers/CSP, origin checks, request limits and throttling.
 - Local or Cloudinary image storage, owned asset references, resumable cover migration and orphan cleanup.
 
 ## Stack
 
-React 19, Vite 8, TypeScript, Tailwind 4, Express 4, PostgreSQL and Prisma 7. Image uploads use Busboy and Sharp. Authentication currently uses scrypt password hashes and HMAC bearer tokens; revocable cookie sessions are the next milestone.
+React 19, Vite 8, TypeScript, Tailwind 4, Express 4, PostgreSQL and Prisma 7. Image uploads use Busboy and Sharp. Authentication uses scrypt password hashes, opaque revocable cookie sessions, CSRF protection and single-use recovery/verification links. Mail is stored locally for this learning project.
 
 Supported Node versions: 20.19+, 22.12+, or 24+. A PostgreSQL database is required. Neon is already suitable for this project; local PostgreSQL works too.
 
@@ -55,7 +56,7 @@ The seed command is idempotent, but deliberately resets the known sample passwor
 | Instructor | instructor@graspit.dev | password123 |
 | Administrator | admin@graspit.dev | password123 |
 
-To provision a separate administrator, set `ADMIN_NAME`, `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your local process environment, then run `npm run db:admin`. The password must contain at least 12 characters. The command creates a new account and never promotes or overwrites an existing one. Remove those environment variables afterwards. Public signup cannot create an administrator. Instructor signup is still open until the account-approval milestone.
+To provision a separate administrator, set `ADMIN_NAME`, `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your local process environment, then run `npm run db:admin`. The password must contain at least 12 characters. The command creates a new account and never promotes or overwrites an existing one. Remove those environment variables afterwards. Public signup creates students. Choosing **Apply to teach** submits an application; administrators approve it after email verification. Category management belongs to administrators.
 
 ## Configuration
 
@@ -65,11 +66,14 @@ Keep secrets in ignored environment files or host secret settings. Never commit 
 | --- | --- |
 | `DATABASE_URL` | Required PostgreSQL runtime connection. The URL's `schema` parameter is honored by queries and explicit row locks. |
 | `DIRECT_URL` | Optional direct connection for Prisma migrations; defaults to `DATABASE_URL`. |
-| `AUTH_SECRET` | Stable random secret, at least 32 characters outside development. Development generates an ephemeral secret only when unset. |
+| `AUTH_SECRET` | Stable random secret for session CSRF tokens, at least 32 characters outside development. Development generates an ephemeral secret only when unset. |
 | `DEMO_MODE` | `true` permits sample-account access and displays demo credentials. Default `false`. |
 | `PAYMENTS_MODE` | `disabled` (default) permits free enrollment only. `mock` explicitly simulates paid enrollment. `razorpay_test` fails startup until implemented. |
 | `PUBLIC_ORIGIN` | Exact browser origin, default `http://localhost:3000`. Public production origins must use HTTPS. |
 | `TRUST_PROXY` | Default `false`. Set only known proxy IPs/subnets when deploying; unrestricted `true` and numeric hop counts are rejected. |
+| `SESSION_DAYS` | Absolute session lifetime, default 7 days, maximum 30. HTTPS uses Secure host-only cookies. HTTP is permitted only for localhost origins. |
+| `MAIL_MODE` | `outbox` (default) saves local mail without sending it. Requires localhost `PUBLIC_ORIGIN`. `disabled` permits a public demo without recovery delivery. |
+| `MAIL_OUTBOX_DIR` | Private mail directory, default `.data/mail-outbox`; must be a subdirectory of `.data`. Never publicly served. |
 | `IMAGE_STORAGE` | `local` (default) or `cloudinary`. |
 | `UPLOAD_DIR` | Local image directory, default `.data/uploads`. Keep it outside `public/`; only safe generated image filenames are served. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Required only for Cloudinary. Keys stay on the server. |
@@ -125,6 +129,7 @@ This is resumable: each course is changed only after successful storage and only
 | `npm run db:import` | Import the old JSON dataset transactionally |
 | `npm run db:verify-import` | Strict read-only parity check against the original demo JSON |
 | `npm run db:backup-cleanup` | Back up retired column values before applying the cleanup migration |
+| `npm run mail:outbox` | Read the latest 10 local verification/recovery messages; contains private single-use links |
 | `npm run uploads:migrate` | Move legacy data-URI course covers to image storage |
 | `npm run uploads:cleanup` | Delete old unreferenced assets with retry protection |
 | `npm run verify:step2` | Original PostgreSQL/API regression suite; build first |
@@ -134,6 +139,7 @@ This is resumable: each course is changed only after successful storage and only
 | `npm run verify:profile` | Profile permissions, email confirmation, avatar ownership and cleanup |
 | `npm run verify:analytics` | Actual enrollment counts, unique learners and scoped instructor booking totals |
 | `npm run verify:loading` | Outdated responses, logout cancellation, timeout recovery and retry races |
+| `npm run verify:auth` | Cookie/CSRF security, revocation, reset races, verification, email changes and instructor approval |
 | `npm test` | Run all database/API suites and the development smoke check sequentially |
 
 ```sh
@@ -189,7 +195,7 @@ src/                      React application and role workspaces
 
 The [implementation plan](docs/IMPLEMENTATION_PLAN.md) records the remaining milestones. [Foundation/image decisions](docs/FOUNDATION_UPLOADS.md) explain these changes. [Patch 2 verification](docs/STEP2_VERIFICATION.md) records the earlier database migration review.
 
-The [database review](docs/DATABASE_REVIEW.md) lists the eight retired columns, the backup/rollout procedure, profile behavior and prioritized optimization recommendations. Email changes require current-password confirmation; address verification/notifications remain part of the email-auth milestone. Shared demo email addresses are fixed.
+The [database review](docs/DATABASE_REVIEW.md) lists the eight retired columns and optimization recommendations. [Session/recovery notes](docs/SESSIONS_RECOVERY.md) describe Milestone 3, its verification results and the local mail workflow. Email changes require the current password and confirmation of the new address; shared demo credentials stay fixed.
 
 ## License
 

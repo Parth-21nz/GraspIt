@@ -102,7 +102,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     );
 
   const canManageCategories =
-    currentUser?.role === 'instructor' || currentUser?.role === 'admin';
+    currentUser?.role === 'admin';
 
   const handleCreateCategorySubmit = async (e: React.FormEvent) => {
     e.preventDefault();

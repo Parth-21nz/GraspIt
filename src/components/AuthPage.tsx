@@ -11,11 +11,13 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import type { UserDocument, UserRole } from '../types';
+import { apiRequest, setCsrfToken } from '../api/client';
 
 interface AuthPageProps {
   initialMode?: 'login' | 'signup';
-  onAuthSuccess: (user: UserDocument, token: string) => void;
+  onAuthSuccess: (user: UserDocument) => void;
   showDemoAccounts?: boolean;
+  notice?: string | null;
   onBackToLanding: () => void;
 }
 
@@ -61,6 +63,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   onAuthSuccess,
   onBackToLanding,
   showDemoAccounts = false,
+  notice,
 }) => {
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode);
   const [email, setEmail] = useState('');
@@ -83,7 +86,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await apiRequest('/api/auth/login', {
         signal: controller.signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -98,7 +101,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         setError(data.error || 'Authentication failed. Check your credentials.');
         return;
       }
-      onAuthSuccess(data.user as UserDocument, data.token as string);
+      setCsrfToken(data.csrfToken);
+      onAuthSuccess(data.user as UserDocument);
     } catch {
       if (!controller.signal.aborted) setError('Network error while attempting to sign in.');
     } finally {
@@ -127,7 +131,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     authRequest.current?.abort(); authRequest.current = controller;
     setSubmitting(true);
     try {
-      const res = await fetch('/api/auth/signup', {
+      const res = await apiRequest('/api/auth/signup', {
         signal: controller.signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -136,9 +140,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           email: email.trim(),
           password,
           role,
-          title:
-            title.trim() ||
-            (role === 'instructor' ? 'Faculty Instructor' : 'Software Engineer'),
+          title: title.trim(),
         }),
       });
       const data = await res.json();
@@ -147,7 +149,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         setError(data.error || 'Could not create account.');
         return;
       }
-      onAuthSuccess(data.user as UserDocument, data.token as string);
+      setCsrfToken(data.csrfToken);
+      onAuthSuccess(data.user as UserDocument);
     } catch {
       if (!controller.signal.aborted) setError('Network error while creating account.');
     } finally {
@@ -183,10 +186,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               </h1>
               <p className="text-xs text-[var(--text-body)]">
                 {mode === 'login'
-                  ? 'Enter your credentials below or use the verified test accounts on the right.'
-                  : 'Register as a Student or Instructor to access courses and curriculum tools.'}
+                    ? showDemoAccounts ? 'Enter your credentials below or use the verified test accounts on the right.' : 'Enter your account email and password.'
+                  : 'Create a learner account. You can also apply to teach after admin approval.'}
               </p>
             </div>
+
+            {notice && <p role="status" className="rounded-xl border border-[var(--border)] p-4 text-sm text-[var(--text-body)]">{notice}</p>}
 
             {/* Mode Switcher Tabs */}
             <div className="grid grid-cols-2 gap-2 p-1 rounded-full bg-[var(--bg)] border border-[var(--border)]">
@@ -258,7 +263,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-3 text-sm text-[var(--text-primary)] focus:border-[var(--red)] focus:outline-none"
                       >
                         <option value="student">Student</option>
-                        <option value="instructor">Instructor</option>
+                        <option value="instructor">Apply to teach</option>
                       </select>
                     </div>
 
@@ -328,6 +333,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 <ArrowRight className="w-4 h-4 text-[var(--red)]" />
               </button>
             </form>
+            {mode === 'login' ? <a href="#forgot-password" className="block text-center text-sm text-[var(--text-body)] underline hover:text-[var(--text-primary)]">Forgot your password?</a> : <p className="text-xs text-[var(--text-body)]">Every account can learn. Choosing Instructor submits a teaching application for admin approval. Verify your email before your application can be approved.</p>}
           </div>
 
           {/* Right 6 Columns: Verified Test Login Information for Easier Testing */}

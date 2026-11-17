@@ -6,6 +6,7 @@ import type { User } from '../generated/prisma/client.ts';
 import type { PrismaClient } from '../generated/prisma/client.ts';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
+import { z } from 'zod';
 import type { AppConfig } from './config.ts';
 import type { ImageStorage } from './storage.ts';
 import { errorHandler, HttpError } from './errors.ts';
@@ -13,6 +14,8 @@ import { routeSchemas, validate } from './validation.ts';
 import { persistImage, readMultipartImage, resolveThumbnail } from './uploads.ts';
 import { SEED_USER_IDS } from './seed.ts';
 import { emailChangeAllowed, updateProfile } from './profile.ts';
+import { createAuth } from './auth.ts';
+import type { MailDelivery } from './mail.ts';
 import {
   courseInclude,
   toCategoryDoc,
@@ -23,46 +26,19 @@ import {
   toNoteDoc,
   toUserDoc,
 } from './mappers.ts';
-import { hashPassword, newId, verifyPassword } from './password.ts';
+import { newId } from './password.ts';
 
-export interface AppDependencies { prisma: PrismaClient; config: AppConfig; storage: ImageStorage }
+export interface AppDependencies { prisma: PrismaClient; config: AppConfig; storage: ImageStorage; mail?: MailDelivery }
 
 /** Builds only the HTTP application; no listen, seed, migrations or Vite side effects. */
-export function createApp({ prisma, config, storage }: AppDependencies) {
-  const AUTH_SECRET = config.authSecret;
+export function createApp({ prisma, config, storage, mail }: AppDependencies) {
+  const auth = createAuth(prisma, config, mail);
   const DEMO_MODE = config.demoMode;
   const databaseSchema = config.databaseSchema;
-  const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
   type UserRole = 'student' | 'instructor' | 'admin';
   const COURSE_LEVELS = ['Foundation', 'Intermediate', 'Principal'] as const;
   const COURSE_STATUSES = ['draft', 'pending', 'published'] as const;
   const schemas = routeSchemas(config);
-
-  // ─── TOKENS ───────────────────────────────────────────────────────────────
-  function signToken(userId: string): string {
-    const payload = Buffer.from(
-      JSON.stringify({ sub: userId, exp: Date.now() + TOKEN_TTL_MS })
-    ).toString('base64url');
-    const sig = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url');
-    return `${payload}.${sig}`;
-  }
-
-  function verifyToken(token: string): string | null {
-    const [payload, sig] = token.split('.');
-    if (!payload || !sig) return null;
-    const expected = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url');
-    const a = Buffer.from(sig);
-    const b = Buffer.from(expected);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-    try {
-      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
-      if (typeof data.sub !== 'string' || typeof data.exp !== 'number') return null;
-      if (data.exp < Date.now()) return null;
-      return data.sub;
-    } catch {
-      return null;
-    }
-  }
 
   // ─── REQUEST HELPERS ──────────────────────────────────────────────────────
   type AuthedRequest = Request & { user?: User };
@@ -78,23 +54,6 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
     err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
   const isNotFound = (err: unknown) =>
     err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025';
-
-  /** Attaches req.user when a valid bearer token for an active user is present. */
-  async function authenticate(req: AuthedRequest, _res: Response, next: NextFunction) {
-    try {
-      const header = req.headers.authorization || '';
-      if (header.startsWith('Bearer ')) {
-        const userId = verifyToken(header.slice(7));
-        if (userId) {
-          const user = await prisma.user.findUnique({ where: { id: userId } });
-          if (user && user.status !== 'suspended' && (DEMO_MODE || !SEED_USER_IDS.includes(user.id))) req.user = user;
-        }
-      }
-      next();
-    } catch (err) {
-      next(err);
-    }
-  }
 
   function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
     if (!req.user) {
@@ -249,16 +208,12 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
   }));
   // With direct connections, ignore spoofed forwarding headers without logging them.
   const limiter = (limit: number, windowMs: number, skipSuccessfulRequests = false) => rateLimit({ limit, windowMs, standardHeaders: 'draft-8', legacyHeaders: false, skipSuccessfulRequests, validate: { xForwardedForHeader: config.trustProxy !== false }, message: { error: 'Too many requests. Please try again later.' } });
-  const loginLimit = limiter(10, 15 * 60_000, true);
-  const signupLimit = limiter(20, 60 * 60_000);
   const inquiryLimit = limiter(10, 15 * 60_000);
   const uploadLimit = limiter(20, 15 * 60_000);
   const profileLimit = limiter(20, 15 * 60_000);
-  app.use('/api', (req, _res, next) => {
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin && req.headers.origin !== config.publicOrigin) return next(new HttpError(403, 'This request origin is not allowed.'));
-    next();
-  });
-  app.use('/api', authenticate);
+  app.use('/api', auth.originGuard);
+  app.use('/api', auth.authenticate);
+  app.use('/api', auth.protectWrites);
   app.use('/api', express.json({ limit: '100kb' }));
   app.param('id', (req, _res, next, value) => {
     if (!schemas.params.safeParse({ id: value }).success) return next(new HttpError(400, 'Invalid record id.'));
@@ -281,11 +236,12 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
   app.post('/api/uploads', requireRole('instructor', 'admin'), uploadLimit, receiveImage(1920));
   app.post('/api/profile/avatar', requireAuth, uploadLimit, receiveImage(512));
   app.get('/api/profile', requireAuth, route(async (req, res) => {
-    res.json({ user: toUserDoc(req.user!), emailChangeAllowed: emailChangeAllowed(req.user!.id) });
+    res.json({ user: toUserDoc(req.user!), emailChangeAllowed: emailChangeAllowed(req.user!.id), pendingEmail: await auth.pendingEmail(req.user!.id), emailDeliveryAvailable: config.mailMode === 'outbox' });
   }));
   app.patch('/api/profile', requireAuth, profileLimit, validate(schemas.profile), route(async (req, res) => {
-    const user = await updateProfile(prisma, databaseSchema, req.user!.id, req.body);
-    res.json({ user: toUserDoc(user), emailChangeAllowed: emailChangeAllowed(user.id) });
+    const { user, emailAction } = await updateProfile(prisma, databaseSchema, req.user!.id, req.body, auth.prepareEmailChange);
+    if (emailAction) await auth.sendAction(emailAction);
+    res.json({ user: toUserDoc(user), emailChangeAllowed: emailChangeAllowed(user.id), pendingEmail: await auth.pendingEmail(user.id), emailDeliveryAvailable: config.mailMode === 'outbox' });
   }));
 
   app.get(
@@ -300,98 +256,7 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
     })
   );
 
-  // ─── AUTHENTICATION API ─────────────────────────────────────────────────
-  app.post(
-    '/api/auth/login',
-    loginLimit,
-    validate(schemas.login),
-    route(async (req, res) => {
-      const { email, password } = req.body as { email?: string; password?: string };
-
-      if (!email?.trim() || !password) {
-        res.status(400).json({ error: 'Email and password are required.' });
-        return;
-      }
-
-      const user = await prisma.user.findUnique({
-        where: { email: email.trim().toLowerCase() },
-      });
-
-      if (!user || (!DEMO_MODE && SEED_USER_IDS.includes(user.id)) || !verifyPassword(password, user.password)) {
-        res.status(401).json({ error: 'Invalid email or password.' });
-        return;
-      }
-      if (user.status === 'suspended') {
-        res.status(403).json({ error: 'This account has been suspended by an administrator.' });
-        return;
-      }
-
-      res.json({ user: toUserDoc(user), token: signToken(user.id) });
-    })
-  );
-
-  app.post(
-    '/api/auth/signup',
-    signupLimit,
-    validate(schemas.signup),
-    route(async (req, res) => {
-      const { name, email, password, role, title, bio } = req.body as {
-        name?: string;
-        email?: string;
-        password?: string;
-        role?: UserRole;
-        title?: string;
-        bio?: string;
-      };
-
-      if (
-        !name?.trim() ||
-        !email?.trim() ||
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
-        !password ||
-        password.length < 8
-      ) {
-        res.status(400).json({
-          error: 'Name, a valid email, and a password of at least 8 characters are required.',
-        });
-        return;
-      }
-
-      // Self-signup can never create an admin.
-      const assignedRole: UserRole = role === 'instructor' ? 'instructor' : 'student';
-
-      try {
-        const newUser = await prisma.user.create({
-          data: {
-            id: newId('usr'),
-            name: name.trim().slice(0, 100),
-            email: email.trim().toLowerCase(),
-            password: hashPassword(password),
-            role: assignedRole,
-            title:
-              title?.trim().slice(0, 100) ||
-              (assignedRole === 'instructor' ? 'Faculty Instructor' : 'Software Engineer'),
-            bio:
-              bio?.trim().slice(0, 500) ||
-              'Building production systems and mastering technical architecture.',
-            avatar:
-              assignedRole === 'instructor'
-                ? '/images/mentor_portrait_lead_1794504817874.jpg'
-                : '/images/hero_floating_mentor_card_1794504815575.jpg',
-          },
-        });
-        res.status(201).json({ user: toUserDoc(newUser), token: signToken(newUser.id) });
-      } catch (err) {
-        if (isUniqueViolation(err)) {
-          res.status(409).json({
-            error: 'An account with this email already exists. Please sign in.',
-          });
-          return;
-        }
-        throw err;
-      }
-    })
-  );
+  app.use('/api/auth', auth.router);
 
   // ─── GET /api/bootstrap (data is filtered by who is asking) ─────────────
   app.get(
@@ -440,6 +305,8 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
         notes,
         inquiries,
         me: user ? toUserDoc(user) : null,
+        csrfToken: req.session?.csrfToken ?? null,
+        emailDeliveryAvailable: config.mailMode === 'outbox',
         demoMode: DEMO_MODE,
         paymentsMode: config.paymentsMode,
       });
@@ -457,7 +324,7 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
 
   app.post(
     '/api/categories',
-    requireRole('instructor', 'admin'),
+    requireRole('admin'),
     validate(schemas.category),
     route(async (req, res) => {
       const { name, description } = req.body as { name?: string; description?: string };
@@ -551,6 +418,7 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
         where: { name: { equals: category, mode: 'insensitive' } },
       });
       if (!existingCategory) {
+        if (user.role !== 'admin') throw new HttpError(400, 'Choose an existing category. An administrator can add new categories.');
         await prisma.category
           .create({
             data: {
@@ -627,7 +495,11 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
       const data: Prisma.CourseUncheckedUpdateInput = {};
       if (typeof b.title === 'string' && b.title.trim()) data.title = b.title.trim().slice(0, 200);
       if (typeof b.subtitle === 'string') data.subtitle = b.subtitle.trim().slice(0, 500);
-      if (typeof b.category === 'string' && b.category.trim()) data.category = b.category.trim().slice(0, 80);
+      if (typeof b.category === 'string' && b.category.trim()) {
+        const category = await prisma.category.findFirst({ where: { name: { equals: b.category.trim(), mode: 'insensitive' } } });
+        if (!category && !isAdmin) throw new HttpError(400, 'Choose an existing category.');
+        data.category = category?.name ?? b.category.trim().slice(0, 80);
+      }
       if (COURSE_LEVELS.includes(b.level as never)) data.level = b.level as (typeof COURSE_LEVELS)[number];
       if (b.price !== undefined && Number.isFinite(Number(b.price))) {
         data.price = Math.max(0, Math.round(Number(b.price)));
@@ -954,9 +826,17 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
         return;
       }
       try {
-        const updated = await prisma.user.update({
-          where: { id },
-          data: { ...(role ? { role } : {}), ...(status ? { status } : {}) },
+        const updated = await prisma.$transaction(async tx => {
+          const table = Prisma.raw(`"${databaseSchema.replace(/"/g, '""')}"."User"`);
+          await tx.$queryRaw`SELECT id FROM ${table} WHERE id = ${id} FOR UPDATE`;
+          const target = await tx.user.findUniqueOrThrow({ where: { id } });
+          if (role === 'instructor' && !target.emailVerifiedAt && !SEED_USER_IDS.includes(id)) throw new HttpError(400, 'The applicant must verify their email before teaching access can be approved.');
+          const result = await tx.user.update({ where: { id }, data: { ...(role ? { role, instructorApplicationStatus: role === 'instructor' ? 'approved' : target.instructorApplicationStatus } : {}), ...(status ? { status } : {}) } });
+          if (status === 'suspended') {
+            await tx.session.updateMany({ where: { userId: id }, data: { revokedAt: new Date() } });
+            await tx.authAction.updateMany({ where: { userId: id, usedAt: null }, data: { usedAt: new Date() } });
+          }
+          return result;
         });
         res.json(toUserDoc(updated));
       } catch (err) {
@@ -968,6 +848,19 @@ export function createApp({ prisma, config, storage }: AppDependencies) {
       }
     })
   );
+
+  app.patch('/api/instructor-applications/:id', requireRole('admin'), validate(z.object({ decision: z.enum(['approved', 'rejected']) })), route(async (req, res) => {
+    const id = String(req.params.id);
+    const user = await prisma.$transaction(async tx => {
+      const table = Prisma.raw(`"${databaseSchema.replace(/"/g, '""')}"."User"`);
+      await tx.$queryRaw`SELECT id FROM ${table} WHERE id = ${id} FOR UPDATE`;
+      const target = await tx.user.findUnique({ where: { id } });
+      if (!target || target.instructorApplicationStatus !== 'pending' || target.role !== 'student') throw new HttpError(409, 'This application is no longer pending.');
+      if (req.body.decision === 'approved' && (!target.emailVerifiedAt || target.status !== 'active')) throw new HttpError(400, 'The applicant must be active and have a verified email.');
+      return tx.user.update({ where: { id }, data: { instructorApplicationStatus: req.body.decision, ...(req.body.decision === 'approved' ? { role: 'instructor' } : {}) } });
+    });
+    res.json(toUserDoc(user));
+  }));
 
   app.post(
     '/api/inquiries',

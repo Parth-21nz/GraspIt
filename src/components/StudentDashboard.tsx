@@ -277,7 +277,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             Welcome back, {currentUser.name}
           </h1>
           <p className="text-sm text-[var(--text-body)] mt-1">
-            {currentUser.title} · Active Technical Mastery Track
+            {currentUser.title && <>{currentUser.title} · </>}Active Technical Mastery Track
           </p>
         </div>
 

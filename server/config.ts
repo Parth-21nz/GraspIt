@@ -14,6 +14,9 @@ const environment = z.object({
   PUBLIC_ORIGIN: z.url().default('http://localhost:3000'),
   // Default to direct connections. Set explicit proxy IPs/subnets when deploying.
   TRUST_PROXY: z.string().default('false'),
+  SESSION_DAYS: z.coerce.number().int().min(1).max(30).default(7),
+  MAIL_MODE: z.enum(['outbox', 'disabled']).default('outbox'),
+  MAIL_OUTBOX_DIR: z.string().default('.data/mail-outbox'),
   IMAGE_STORAGE: z.enum(['local', 'cloudinary']).default('local'),
   UPLOAD_DIR: z.string().min(1).default('.data/uploads'),
   CLOUDINARY_CLOUD_NAME: z.string().regex(/^[a-zA-Z0-9_-]+$/).optional(),
@@ -41,7 +44,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     return u.origin;
   };
   const publicOrigin = normalizeOrigin(e.PUBLIC_ORIGIN);
-  if (e.NODE_ENV === 'production' && publicUrl.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(publicUrl.hostname)) throw new Error('PUBLIC_ORIGIN must use HTTPS outside localhost in production.');
+  const mailOutboxDir = path.resolve(e.MAIL_OUTBOX_DIR);
+  const outboxRelative = path.relative(path.resolve('.data'), mailOutboxDir);
+  if (e.MAIL_MODE === 'outbox' && (!outboxRelative || outboxRelative === '..' || outboxRelative.startsWith(`..${path.sep}`) || path.isAbsolute(outboxRelative))) throw new Error('MAIL_OUTBOX_DIR must be a private subdirectory of .data.');
+  if (e.MAIL_MODE === 'outbox' && !['localhost', '127.0.0.1', '[::1]'].includes(publicUrl.hostname)) throw new Error('Local mail outbox requires a localhost PUBLIC_ORIGIN. Use MAIL_MODE=disabled for a public demo until real email delivery is configured.');
+  if (publicUrl.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(publicUrl.hostname)) throw new Error('PUBLIC_ORIGIN must use HTTPS outside localhost.');
   if (e.TRUST_PROXY === 'true' || /^\d+$/.test(e.TRUST_PROXY)) throw new Error('TRUST_PROXY must be false or explicit trusted proxy IPs/subnets, not an unrestricted boolean/hop count.');
   const trustProxy: false | string[] = e.TRUST_PROXY === 'false' ? false : origins(e.TRUST_PROXY);
   if (Array.isArray(trustProxy) && trustProxy.length === 0) throw new Error('TRUST_PROXY must name trusted proxy IPs/subnets.');
@@ -52,6 +59,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     authSecret: e.AUTH_SECRET || crypto.randomBytes(32).toString('hex'),
     demoMode: e.DEMO_MODE, paymentsMode: e.PAYMENTS_MODE as 'disabled' | 'mock',
     port: e.PORT, publicOrigin, trustProxy,
+    sessionDays: e.SESSION_DAYS, secureCookies: publicUrl.protocol === 'https:',
+    mailMode: e.MAIL_MODE, mailOutboxDir,
     videoOrigins: origins(e.VIDEO_ORIGINS).map(normalizeOrigin),
     imageStorage: e.IMAGE_STORAGE, uploadDir: path.resolve(e.UPLOAD_DIR),
     cloudinary: { cloud_name: e.CLOUDINARY_CLOUD_NAME, api_key: e.CLOUDINARY_API_KEY, api_secret: e.CLOUDINARY_API_SECRET, folder: e.CLOUDINARY_FOLDER },

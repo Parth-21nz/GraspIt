@@ -49,6 +49,7 @@ try {
   assert.equal(course.instructorName, 'Current instructor'); assert.equal(course.instructorRole, 'Current title');
   assert.equal(course.instructorSignature, 'Custom certificate signature');
   for (const key of ['slug', 'rating', 'instructorAvatar']) assert(!(key in course));
+  await runSql('20261117030000_sessions_recovery');
   assert.equal((await db.user.findUniqueOrThrow({ where: { id: 'upgrade_author' } })).avatarAssetId, null);
   passed++; console.log('PASS course authors come from the profile while the custom certificate signature survives');
 } finally {

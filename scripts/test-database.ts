@@ -16,8 +16,18 @@ export async function testDatabase(options: { migrate?: boolean } = {}) {
   const url = new URL(process.env.DATABASE_URL);
   url.searchParams.set('schema', schema);
   const uploadDir = path.resolve('.data', schema);
-  const env = { ...process.env, DATABASE_URL: url.toString(), DIRECT_URL: url.toString(), AUTH_SECRET: crypto.randomBytes(32).toString('hex'), NODE_ENV: 'test', PUBLIC_ORIGIN: 'http://localhost:3000', TRUST_PROXY: 'false', IMAGE_STORAGE: 'local', UPLOAD_DIR: uploadDir, PAYMENTS_MODE: 'disabled', DEMO_MODE: 'false' };
+  const env = { ...process.env, DATABASE_URL: url.toString(), DIRECT_URL: url.toString(), AUTH_SECRET: crypto.randomBytes(32).toString('hex'), NODE_ENV: 'test', PUBLIC_ORIGIN: 'http://localhost:3000', TRUST_PROXY: 'false', IMAGE_STORAGE: 'local', UPLOAD_DIR: uploadDir, MAIL_MODE: 'outbox', MAIL_OUTBOX_DIR: path.join(uploadDir, 'mail'), PAYMENTS_MODE: 'disabled', DEMO_MODE: 'false' };
   const sql = new pg.Client({ connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL, connectionTimeoutMillis: 10_000 });
+  // Remote databases can terminate an idle administrative connection while
+  // browser/API work continues through Prisma's pool. Queries still reject;
+  // an idle error must not crash the process and bypass fixture cleanup.
+  sql.on('error', () => {});
+  const dropSchema = async () => {
+    const cleanup = new pg.Client({ connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL, connectionTimeoutMillis: 10_000 });
+    await cleanup.connect();
+    try { await cleanup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); }
+    finally { await cleanup.end(); }
+  };
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url.toString(), connectionTimeoutMillis: 10_000 }, { schema }), transactionOptions: { maxWait: 10_000, timeout: 30_000 } });
   await sql.connect();
   try {
@@ -27,16 +37,16 @@ export async function testDatabase(options: { migrate?: boolean } = {}) {
       assert.equal(migrated.status, 0, `Test migration failed: ${migrated.stderr}\n${migrated.stdout}`);
     }
   } catch (err) {
-    await sql.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
-    await sql.end();
+    await dropSchema();
+    await sql.end().catch(() => {});
     throw err;
   }
   return {
     db, sql, schema, env, config: loadConfig(env), uploadDir,
     async close() {
       await db.$disconnect();
-      await sql.query(`DROP SCHEMA "${schema}" CASCADE`);
-      await sql.end();
+      await dropSchema();
+      await sql.end().catch(() => {});
       const resolved = path.resolve(uploadDir);
       assert.equal(path.dirname(resolved), path.resolve('.data'));
       assert.equal(path.basename(resolved), schema);

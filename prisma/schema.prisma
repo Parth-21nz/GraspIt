@@ -54,6 +54,19 @@ enum UploadState {
   deleting
 }
 
+enum InstructorApplicationStatus {
+  none
+  pending
+  approved
+  rejected
+}
+
+enum AuthActionPurpose {
+  resetPassword
+  verifyEmail
+  changeEmail
+}
+
 model User {
   id          String       @id
   name        String
@@ -67,12 +80,44 @@ model User {
   avatarAsset UploadAsset? @relation("ProfileAvatar", fields: [avatarAssetId], references: [id], onDelete: Restrict)
   status      UserStatus   @default(active)
   joinedAt    DateTime     @default(now())
+  emailVerifiedAt DateTime?
+  instructorApplicationStatus InstructorApplicationStatus @default(none)
+  sessions Session[]
+  authActions AuthAction[]
   courses     Course[]
   enrollments Enrollment[]
   notes       Note[]
   uploads     UploadAsset[] @relation("UploadedAssets")
 
   @@index([avatarAssetId])
+}
+
+model Session {
+  id String @id
+  tokenHash String @unique
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AuthAction {
+  id String @id
+  tokenHash String @unique
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose AuthActionPurpose
+  email String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  usedAt DateTime?
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
 }
 
 model Category {

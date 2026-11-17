@@ -38,7 +38,6 @@ interface InstructorCMSProps {
     payload: Partial<CourseDocument>
   ) => Promise<void>;
   onDeleteCourse: (courseId: string) => Promise<void>;
-  onCreateCategory: (name: string, description: string) => Promise<void>;
 }
 
 const createEmptyModule = (index: number): CourseModule => ({
@@ -65,7 +64,6 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
   onUploadCover,
   onUpdateCourse,
   onDeleteCourse,
-  onCreateCategory,
 }) => {
   const [activeTab, setActiveTab] = useState<'catalog' | 'builder' | 'analytics'>(
     'catalog'
@@ -77,7 +75,6 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
   const [title, setTitle] = useState('');
   const [subtitle, setSubtitle] = useState('');
   const [category, setCategory] = useState('');
-  const [customCategory, setCustomCategory] = useState('');
   const [level, setLevel] = useState<'Foundation' | 'Intermediate' | 'Principal'>(
     'Intermediate'
   );
@@ -101,9 +98,6 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<string | null>(null);
 
-  // Quick Category Creation
-  const [newCatName, setNewCatName] = useState('');
-  const [newCatDesc, setNewCatDesc] = useState('');
 
   // Revenue & Analytics Calculations
   const publishedCoursesCount = courses.filter(
@@ -123,7 +117,6 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
     setTitle('');
     setSubtitle('');
     setCategory('');
-    setCustomCategory('');
     setLevel('Intermediate');
     setPrice('');
     setDurationHours('');
@@ -146,7 +139,6 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
     setTitle(course.title);
     setSubtitle(course.subtitle);
     setCategory(course.category);
-    setCustomCategory('');
     setLevel(course.level);
     setPrice(String(course.price));
     setDurationHours(String(course.durationHours));
@@ -232,7 +224,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
     e.preventDefault();
     setFormError(null);
 
-    const finalCategory = customCategory.trim() ? customCategory.trim() : category.trim();
+    const finalCategory = category.trim();
 
     if (!title.trim()) {
       setFormError('Please enter a course title.');
@@ -345,15 +337,6 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
     }
   };
 
-  const handleQuickAddCategory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCatName.trim()) return;
-    await onCreateCategory(newCatName.trim(), newCatDesc.trim());
-    setCategory(newCatName.trim());
-    setNewCatName('');
-    setNewCatDesc('');
-  };
-
   return (
     <div className="space-y-10">
       {/* Top CMS Header */}
@@ -410,7 +393,7 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                 : 'btn-secondary-outline'
             }`}
           >
-            Demo Analytics & Categories
+            Demo Analytics
           </button>
         </div>
       </div>
@@ -757,19 +740,6 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div className="md:col-span-6 lg:col-span-4">
-              <label className="block text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">
-                Or Create New Category On-The-Fly
-              </label>
-              <input
-                type="text"
-                value={customCategory}
-                onChange={(e) => setCustomCategory(e.target.value)}
-                placeholder="Enter new category name..."
-                className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--red)] focus:outline-none"
-              />
             </div>
 
             <div className="md:col-span-6 lg:col-span-2">
@@ -1201,47 +1171,15 @@ export const InstructorCMS: React.FC<InstructorCMSProps> = ({
               </span>
               <div>
                 <h3 className="text-lg font-bold text-[var(--text-primary)]">
-                  Subject Taxonomy Builder
+                  Available Categories
                 </h3>
                 <p className="text-xs text-[var(--text-muted)]">
-                  Add new categories to the catalog filter bar.
+                  Shared subjects managed by administrators.
                 </p>
               </div>
             </div>
 
-            <form onSubmit={handleQuickAddCategory} className="space-y-4">
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-[var(--text-muted)] mb-1.5">
-                  Category Title
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newCatName}
-                  onChange={(e) => setNewCatName(e.target.value)}
-                  placeholder="e.g. Cybersecurity, Quantum Computing..."
-                  className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-primary)] focus:border-[var(--red)] focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-[var(--text-muted)] mb-1.5">
-                  Scope Description
-                </label>
-                <input
-                  type="text"
-                  value={newCatDesc}
-                  onChange={(e) => setNewCatDesc(e.target.value)}
-                  placeholder="Brief summary of courses in this category..."
-                  className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-primary)] focus:border-[var(--red)] focus:outline-none"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full btn-crimson rounded-full py-2.5 text-xs font-semibold uppercase tracking-wider cursor-pointer"
-              >
-                + Publish Category
-              </button>
-            </form>
+            <p className="text-sm text-[var(--text-body)]">Select an existing category when authoring a course. Administrators maintain the shared catalog categories.</p>
 
             <div className="space-y-2.5 pt-2">
               <div className="text-xs uppercase tracking-wider text-[var(--text-muted)]">
